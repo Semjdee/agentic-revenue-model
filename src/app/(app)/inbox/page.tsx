@@ -44,8 +44,16 @@ export default function InboxPage() {
   }
 
   async function loadDetail(id: string) {
-    const data = await api.get<{ conversation: ConversationListItem; contact: unknown; messages: Message[] }>(`/api/internal/conversations/${id}`);
-    setDetail({ conversation: data.conversation, messages: data.messages });
+    const data = await api.get<{
+      conversation: Omit<ConversationListItem, "contact">;
+      contact: ConversationListItem["contact"];
+      messages: Message[];
+    }>(`/api/internal/conversations/${id}`);
+    // The detail endpoint returns `contact` as a sibling of `conversation`
+    // (see src/app/api/internal/conversations/[id]/route.ts), unlike the
+    // list endpoint which nests it — normalize here so the rest of this
+    // component can always read `conversation.contact`.
+    setDetail({ conversation: { ...data.conversation, contact: data.contact }, messages: data.messages });
   }
 
   useEffect(() => {
