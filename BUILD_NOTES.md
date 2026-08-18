@@ -7,11 +7,13 @@ code.
 
 > **Picking this up to build the next phase?** Go to
 > [`HANDOFF.md`](./HANDOFF.md) — this document is context on the MVP
-> that already exists; the actual next task is
-> [`docs/PHASE_2_EXTENSIONS_SPEC.md`](./docs/PHASE_2_EXTENSIONS_SPEC.md)
-> (self-service social integration onboarding + Influencer Attribution &
-> AI Performance Intelligence), which supersedes the small backlog in
-> section 10 below in priority.
+> that already exists. **As of 2026-08-19, the actual next task is
+> [`docs/ONBOARDING_SPEC.md`](./docs/ONBOARDING_SPEC.md) /
+> [`docs/ONBOARDING_TASKS.md`](./docs/ONBOARDING_TASKS.md)** (zero-to-live
+> self-onboarding — re-prioritized above the previously-planned
+> [`docs/PHASE_2_EXTENSIONS_SPEC.md`](./docs/PHASE_2_EXTENSIONS_SPEC.md),
+> which is not cancelled, just now lower priority — see `HANDOFF.md`),
+> which supersedes the small backlog in section 10 below in priority.
 
 ## 1. Where to find the thing you specifically asked about
 
@@ -258,6 +260,20 @@ real, active row in `users` and returns null (falls back to requiring real
 login) if that user doesn't exist — consistent with this codebase's "never
 fake" discipline elsewhere. Logs a loud one-time `console.warn` the first
 time it activates, so it's never silently on. Documented in `.env.example`.
+
+## 9d. Priority pivot to zero-to-live self-onboarding (2026-08-19)
+
+The product owner re-prioritized development the same day as the Phase 2
+handoff was written. `docs/ONBOARDING_SPEC.md` (a self-service onboarding
+wizard — signup → business profile → knowledge import → channel connect
+→ AI agent auto-config → test → health check → Go Live, with zero SMS
+Consult staff involvement) is now the top priority, broken into
+milestones in `docs/ONBOARDING_TASKS.md`. Phase 2
+(`docs/PHASE_2_EXTENSIONS_SPEC.md` / `docs/PHASE_2_TASKS.md`) is not
+cancelled, just now P2 priority — see `docs/ONBOARDING_SPEC.md` section
+37 for the full priority ordering. `HANDOFF.md` was updated to point
+fresh sessions at the onboarding docs first. Not yet started as of this
+entry — see `docs/ONBOARDING_TASKS.md` Milestone 0/1 for where to begin.
 
 ## 10. Pending / not yet implemented — team backlog
 

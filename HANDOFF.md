@@ -3,7 +3,26 @@
 You're picking up the **AI Revenue Agent Platform** after its MVP build.
 This file is the entry point. Read it fully before touching code.
 
-## Read in this order
+## ⚠️ Current top priority (as of 2026-08-19): Zero-to-Live Self-Onboarding
+
+The product owner re-prioritized development on 2026-08-19. **Before
+touching `docs/PHASE_2_TASKS.md`, read:**
+
+1. **`docs/ONBOARDING_SPEC.md`** — the current #1 priority: a self-service
+   onboarding wizard so a business owner can sign up, configure, test, and
+   activate their AI sales operation with zero SMS Consult staff
+   involvement. Includes an addendum on preserving the existing manual AI
+   Agent creation workflow alongside the new guided path.
+2. **`docs/ONBOARDING_TASKS.md`** — the ordered milestone checklist to
+   execute, same format as `docs/PHASE_2_TASKS.md`.
+
+**Phase 2 (below) is not cancelled** — it's now P2 priority
+(`docs/ONBOARDING_SPEC.md` section 37), and Milestone 8 of the onboarding
+tasks directly reuses Phase 2 Milestone 1's integration framework for
+WhatsApp self-connect. Read the rest of this file for context on what
+exists, then go to `docs/ONBOARDING_TASKS.md` to start working.
+
+## Read in this order (original Phase 2 handoff — now secondary priority)
 
 1. **This file** — orientation and ground rules.
 2. **`README.md`** — how to install, run, seed, and demo the app.
@@ -20,11 +39,11 @@ This file is the entry point. Read it fully before touching code.
    repeatedly warns against the most tempting shortcuts (building a
    separate influencer CRM, faking OAuth, faking metrics, letting the
    LLM calculate ROAS itself).
-5. **`docs/PHASE_2_TASKS.md`** — **this is what you actually execute.**
-   The spec above, broken into an ordered, checkable task list — exact
-   files to create/touch per task, which existing code to mirror so
-   patterns stay consistent, and a Definition of Done for each
-   milestone. Work through it top to bottom.
+5. **`docs/PHASE_2_TASKS.md`** — **this is what you actually execute**,
+   once the onboarding priority above is solid. The spec above, broken
+   into an ordered, checkable task list — exact files to create/touch per
+   task, which existing code to mirror so patterns stay consistent, and a
+   Definition of Done for each milestone. Work through it top to bottom.
 
 ## What already exists (don't rebuild it)
 
