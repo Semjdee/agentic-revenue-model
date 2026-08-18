@@ -31,7 +31,57 @@ export function verifySession(token: string): SessionPayload | null {
   }
 }
 
+// --- Dev-only login bypass -------------------------------------------------
+// For local demos where clicking through /login every time is friction.
+// Two independent gates, both must hold: DISABLE_AUTH must be the literal
+// string "true" in .env, AND NODE_ENV must not be "production" — the second
+// gate is defense in depth so this can never activate in a real deployment
+// even if DISABLE_AUTH="true" is left in a prod .env by mistake (Next.js
+// sets NODE_ENV="production" for `npm run build`/`npm start` regardless of
+// what's in .env). Off by default. Single chokepoint: every internal route
+// and the app layout goes through getSession(), so this is the only place
+// that needs to know about it. See BUILD_NOTES.md → "Dev-only login bypass".
+function isAuthBypassEnabled(): boolean {
+  return process.env.DISABLE_AUTH === "true" && process.env.NODE_ENV !== "production";
+}
+
+let bypassWarningLogged = false;
+
+async function getBypassSession(): Promise<SessionPayload | null> {
+  if (!bypassWarningLogged) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "\n[auth] ⚠️  DISABLE_AUTH=true — login is BYPASSED for every request. " +
+        "Dev-only. Remove DISABLE_AUTH from .env to restore normal login.\n"
+    );
+    bypassWarningLogged = true;
+  }
+
+  const email = process.env.DISABLE_AUTH_EMAIL || "owner@raygrid.demo";
+  const [user] = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.email, email))
+    .limit(1);
+
+  // Falls through to null (real login required) rather than fabricating a
+  // session if the target user doesn't exist — never fake an authenticated
+  // identity that isn't backed by a real row.
+  if (!user || !user.active) return null;
+
+  return {
+    userId: user.id,
+    tenantId: user.tenantId,
+    role: user.role,
+    email: user.email,
+    name: user.name,
+  };
+}
+
 export async function getSession(): Promise<SessionPayload | null> {
+  if (isAuthBypassEnabled()) {
+    return getBypassSession();
+  }
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;

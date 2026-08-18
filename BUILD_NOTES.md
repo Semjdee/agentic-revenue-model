@@ -233,6 +233,32 @@ by a team review of this document:
   in `public/widget.js`) — verified with a before/after screenshot; see
   section 12.
 
+## 9c. Dev-only login bypass (2026-08-19)
+
+Added at explicit request, purely for local demo convenience — clicking
+through `/login` on every fresh session is friction during a walkthrough.
+**Off by default; do not enable outside local dev.**
+
+Set `DISABLE_AUTH="true"` in `.env` and every request is treated as already
+authenticated as `DISABLE_AUTH_EMAIL` (default `owner@raygrid.demo` — the
+seeded RayGrid owner). Implemented as a single chokepoint in `getSession()`
+(`src/lib/auth.ts`), since every internal route and the `(app)` layout
+already goes through it — no second auth path was introduced.
+
+Two independent gates, both must hold before it does anything:
+
+1. `DISABLE_AUTH` must be the literal string `"true"`.
+2. `NODE_ENV` must **not** be `"production"` — Next.js sets this
+   automatically for `npm run build`/`npm start` regardless of `.env`
+   content, so this can't accidentally go live even if `DISABLE_AUTH="true"`
+   ends up in a deployed environment's config by mistake.
+
+It also never fabricates a session: it looks up `DISABLE_AUTH_EMAIL` as a
+real, active row in `users` and returns null (falls back to requiring real
+login) if that user doesn't exist — consistent with this codebase's "never
+fake" discipline elsewhere. Logs a loud one-time `console.warn` the first
+time it activates, so it's never silently on. Documented in `.env.example`.
+
 ## 10. Pending / not yet implemented — team backlog
 
 These are known, deliberate simplifications, not accidental gaps — each
