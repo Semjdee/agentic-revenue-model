@@ -3,25 +3,49 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --background: #f9f9f7;
+  --page-plane: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --foreground: #0b0b0b;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --gridline: #e1e0d9;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: dark;
+    --background: #0d0d0d;
+    --page-plane: #0d0d0d;
+    --surface-1: #1a1a19;
+    --foreground: #ffffff;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
   }
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  .card {
+    @apply bg-surface border border-black/10 dark:border-white/10 rounded-xl shadow-sm;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--gridline);
+    border-radius: 4px;
   }
 }

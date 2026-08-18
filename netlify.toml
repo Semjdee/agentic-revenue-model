@@ -1,0 +1,30 @@
+# Netlify deployment config for the AI Revenue Agent Platform.
+#
+# IMPORTANT — read BUILD_NOTES.md -> "Deploying to Netlify" before using
+# this. Netlify hosts the Next.js app itself (via the official Next.js
+# Runtime, installed automatically below) but does NOT provide a managed
+# Postgres or Redis — you need those from an external provider (Neon +
+# Upstash are the simplest free-tier options) and to set DATABASE_URL /
+# REDIS_URL as Netlify environment variables. This file has not been
+# deployed/verified from inside this build environment (outbound network
+# access here is allowlisted and does not reach api.netlify.com) — verify
+# your first deploy and adjust if Netlify's Next.js Runtime version needs
+# a different config shape by the time you deploy.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Follow-up engine on Netlify:
+# The BullMQ worker (`npm run worker`, src/modules/followups/worker.ts) is a
+# long-running Node process — Netlify Functions are request/schedule-triggered
+# and stateless, so that worker can't run there as-is. This scheduled
+# function calls the same `runFollowUpCheck()` logic directly on a timer
+# instead, so follow-ups still fire on Netlify without a persistent worker.
+# (BullMQ enqueueing elsewhere in the app is unaffected — this only replaces
+# the *processing* of the recurring follow-up check job.)
+[functions."followups-cron"]
+  schedule = "*/5 * * * *"
