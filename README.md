@@ -11,8 +11,13 @@ tracked back to the ad campaign that paid for it — so you know which ads
 are actually making you money, not just generating clicks.
 
 See **[BUILD_NOTES.md](./BUILD_NOTES.md)** for the tools used, the
-decisions made, every deviation from the spec, and the known gaps — read
-that first if you're picking this project up.
+decisions made, every deviation from the spec, and the known gaps.
+
+**Picking this project up fresh? Start at [`HANDOFF.md`](./HANDOFF.md)**
+— it points you at BUILD_NOTES.md for context on what exists, and at
+[`docs/PHASE_2_EXTENSIONS_SPEC.md`](./docs/PHASE_2_EXTENSIONS_SPEC.md)
+for the next phase of work (self-service WhatsApp/Instagram/TikTok
+onboarding + Influencer Attribution & AI Performance Intelligence).
 
 ## Quick start
 

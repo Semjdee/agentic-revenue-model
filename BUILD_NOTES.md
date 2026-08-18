@@ -5,6 +5,14 @@ what deviates from the original spec and why, what's real vs. mocked, and
 what to look at first if something looks wrong. Read this before reading
 code.
 
+> **Picking this up to build the next phase?** Go to
+> [`HANDOFF.md`](./HANDOFF.md) — this document is context on the MVP
+> that already exists; the actual next task is
+> [`docs/PHASE_2_EXTENSIONS_SPEC.md`](./docs/PHASE_2_EXTENSIONS_SPEC.md)
+> (self-service social integration onboarding + Influencer Attribution &
+> AI Performance Intelligence), which supersedes the small backlog in
+> section 10 below in priority.
+
 ## 1. Where to find the thing you specifically asked about
 
 The **Knowledge Base "Add Knowledge" dialog box** — where a business owner
