@@ -13,13 +13,18 @@ This file is the entry point. Read it fully before touching code.
    of technical-debt items (section 10 — WebSockets, pgvector-based
    knowledge retrieval, a first real CRM/Ads connector). Those are minor
    compared to what's below — pick them up opportunistically, not first.
-4. **`docs/PHASE_2_EXTENSIONS_SPEC.md`** — **this is your actual next
-   task.** It's the full product spec for two extensions: self-service
-   WhatsApp/Instagram/TikTok onboarding, and Influencer Attribution & AI
-   Performance Intelligence. Read it in full before writing any code —
-   it's long and precise for a reason, and it repeatedly warns against
-   the most tempting shortcuts (building a separate influencer CRM,
-   faking OAuth, faking metrics, letting the LLM calculate ROAS itself).
+4. **`docs/PHASE_2_EXTENSIONS_SPEC.md`** — the full product spec for two
+   extensions: self-service WhatsApp/Instagram/TikTok onboarding, and
+   Influencer Attribution & AI Performance Intelligence. Read it in full
+   before writing any code — it's long and precise for a reason, and it
+   repeatedly warns against the most tempting shortcuts (building a
+   separate influencer CRM, faking OAuth, faking metrics, letting the
+   LLM calculate ROAS itself).
+5. **`docs/PHASE_2_TASKS.md`** — **this is what you actually execute.**
+   The spec above, broken into an ordered, checkable task list — exact
+   files to create/touch per task, which existing code to mirror so
+   patterns stay consistent, and a Definition of Done for each
+   milestone. Work through it top to bottom.
 
 ## What already exists (don't rebuild it)
 
@@ -85,29 +90,20 @@ don't have to rediscover them:
   end-to-end. `npm run demo-journey` and `npm run build` are your
   regression gates; don't merge anything that breaks either.
 
-## Suggested first milestone
+## Where to actually start
 
-Mirror the spec's own fallback plan (its "Feature flags" section) rather
-than trying to ship all of Part A and Part B at once:
+Don't try to ship all of Part A and Part B at once. `docs/PHASE_2_TASKS.md`
+breaks this into 7 ordered milestones — schema/framework first, then one
+real connector (WhatsApp) end to end, then the influencer data model and
+tracking links, then the WhatsApp-influencer attribution path (the
+single most important milestone — it's the thin slice proving Part A and
+Part B actually connect), then scoring/AI-analyst, then the UI and
+report job. Instagram, TikTok, assisted attribution, and cross-channel
+marketing intelligence are explicitly deferred to a backlog section at
+the end rather than attempted alongside everything else.
 
-1. Add the `IntegrationConnection` table + `ProviderCapability` model to
-   the schema (migration-safe — additive only).
-2. Build the generic `OAuthConnector` interface + a mock implementation
-   for one provider (WhatsApp is the best first target — it's the one
-   the influencer attribution flow in Part A section 24 depends on).
-3. Build the Integration Permission Centre UI against real granted
-   scopes on that one connector.
-4. Add the Influencer data model (section 19) and reuse the existing
-   attribution/CRM flow to prove one end-to-end path: tracking link →
-   WhatsApp → conversation → lead → sale → attribution touch tagged
-   `INFLUENCER`.
-5. Only after that thin slice works end-to-end, broaden to
-   Instagram/TikTok connectors and the scoring/leaderboard/AI-analyst
-   surface of Part B.
-
-A `scripts/demo-journey-phase2.ts` that exercises step 4 above the same
-way `scripts/demo-journey.ts` exercises the original MVP is the right
-way to prove this milestone is real, not just UI.
+Work through it top to bottom, check off each Definition of Done, run
+Milestone 0's regression checks after every milestone.
 
 ## Questions you can't resolve from the code or the spec
 
