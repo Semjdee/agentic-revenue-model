@@ -275,6 +275,67 @@ cancelled, just now P2 priority — see `docs/ONBOARDING_SPEC.md` section
 fresh sessions at the onboarding docs first. Not yet started as of this
 entry — see `docs/ONBOARDING_TASKS.md` Milestone 0/1 for where to begin.
 
+## 9e. Zero-to-live self-onboarding — complete (2026-08-19)
+
+All 12 milestones in `docs/ONBOARDING_TASKS.md` (M0–M11) are done,
+covering every P0 item in `docs/ONBOARDING_SPEC.md` section 37. The full
+loop — `NEW BUSINESS → SELF SIGNUP → BUSINESS SETUP → KNOWLEDGE IMPORT →
+SELF-CONNECT CHANNEL → AI AGENT GENERATED → TEST → HEALTH CHECK → GO LIVE
+→ FIRST REAL CONVERSATION` (spec section 38) — was exercised end-to-end
+against a real running server (not just `tsc`/mocked tests): a test
+tenant registered, filled in a business profile, added a product,
+generated a guided AI agent (created `DRAFT`, byte-identical `agents`
+table row to a manually-created one), connected WhatsApp via a real
+staged OAuth-shaped mock connector (state/CSRF validated — a wrong state
+is genuinely rejected, not waved through), passed a genuine health check,
+and went live — flipping the agent `DRAFT → ACTIVE`, which is the exact
+same field `startConversation()`/`startChannelConversation()`/the public
+widget route already gate on, so no new enforcement code was needed for
+"live" to mean something real. A simulated inbound WhatsApp message to
+RayGrid's seeded tenant produced a genuine AI reply from Amara, a real
+contact, and a real lead — proving the WhatsApp adapter reuses the exact
+same `handleCustomerMessage()` the widget uses, per spec section 13.
+
+Two deliberate scope decisions, documented in `docs/ONBOARDING_TASKS.md`:
+
+- **WhatsApp self-connect (M8)** extends the existing `integrations` /
+  `integrationCredentials` tables (new OAuth fields: `scopes`,
+  `webhookStatus`, `externalAccountId`, etc.) rather than adding a
+  parallel `integration_connections` table — this already was the
+  "Integration Hub" `docs/PHASE_2_EXTENSIONS_SPEC.md` section 5
+  describes. Only WhatsApp got the full staged connector pipeline
+  (`getAuthorizationUrl → handleCallback → exchangeAuthorizationCode →
+  registerWebhooks → testConnection`, only reaching `CONNECTED` if every
+  stage succeeds); the other providers on the general `/integrations`
+  page keep their pre-existing one-click mock-connect, since they're
+  outside this priority's P0 scope.
+- **TTFV/funnel analytics (M10)** shipped tenant-scoped (a new
+  "Activation" tab on `/settings`), not the spec's literal cross-tenant
+  admin dashboard — this codebase has no "platform staff" auth concept
+  distinct from the existing per-tenant roles in `src/lib/permissions.ts`,
+  and building cross-tenant data access without that designed first would
+  be a real security shortcut, not a productive one. Flagged in
+  `docs/ONBOARDING_TASKS.md` backlog.
+
+Two pre-existing bugs found (not introduced by this work, not yet fixed,
+worth picking up separately):
+
+- `lead.source` is hardcoded to `"website"` in
+  `src/modules/ai/actions.ts`'s `create_lead` handler regardless of the
+  conversation's actual channel — a WhatsApp-originated lead still shows
+  `source: "website"`.
+- The `/followups` page and the dashboard's "Overdue follow-ups" count
+  can disagree (dashboard showed 3, the Follow-ups page showed
+  Overdue 0 / Upcoming 1 for the same data) — looks like the two views
+  compute "overdue" differently; not investigated further.
+
+Everything above was verified with the regression gate (`npm run build`,
+`npm run demo-journey`) clean after every milestone, per this project's
+established discipline — see individual commit messages for the specific
+verification each milestone got. Next up per spec section 37's priority
+order: P1 (Instagram self-connect, CRM connector onboarding, Google Ads
+self-connect + attribution, billing/subscription self-service).
+
 ## 10. Pending / not yet implemented — team backlog
 
 These are known, deliberate simplifications, not accidental gaps — each

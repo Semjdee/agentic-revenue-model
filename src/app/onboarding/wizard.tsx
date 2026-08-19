@@ -199,7 +199,7 @@ function BusinessProfileStep({ tenant, onDone }: { session: { tenantId: string; 
         <h1 className="text-[16px] font-semibold text-ink-primary">Tell us about your business</h1>
         <p className="text-[12.5px] text-ink-secondary mt-0.5">Just the essentials — you can refine everything later.</p>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>Business name</Label>
           <Input required value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} />
@@ -229,7 +229,7 @@ function BusinessProfileStep({ tenant, onDone }: { session: { tenantId: string; 
         <Label>What does your business do?</Label>
         <Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>Primary sales objective</Label>
           <Input value={form.primaryObjective} onChange={(e) => setForm({ ...form, primaryObjective: e.target.value })} placeholder="Generate qualified leads" />
@@ -343,7 +343,7 @@ function KnowledgeImportStep({ onDone }: { onDone: () => void }) {
       </div>
       <div className="space-y-3">
         {products.map((p, i) => (
-          <div key={i} className="grid grid-cols-[2fr_1fr_1fr] gap-2">
+          <div key={i} className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_1fr] gap-2">
             <Input
               placeholder="Product name"
               value={p.name}
@@ -585,7 +585,7 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
         <Label>Is there anything the AI must never promise?</Label>
         <Input value={answers.neverPromise} onChange={(e) => setAnswers({ ...answers, neverPromise: e.target.value })} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
           <input type="checkbox" checked={answers.negotiatePrices} onChange={(e) => setAnswers({ ...answers, negotiatePrices: e.target.checked })} />
           We negotiate prices
