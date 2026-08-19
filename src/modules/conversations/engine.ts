@@ -125,6 +125,77 @@ export async function startConversation(input: StartConversationInput) {
 }
 
 /**
+ * Channel-identity conversation entry point — for any channel that
+ * identifies a customer by a stable identity (phone number, platform user
+ * id) rather than the website widget's session cookie. Currently used by
+ * the WhatsApp webhook handler (src/app/api/public/webhooks/whatsapp/route.ts,
+ * docs/ONBOARDING_TASKS.md Milestone 8); Instagram/Messenger would reuse
+ * this too once built (docs/PHASE_2_TASKS.md backlog) rather than each
+ * needing their own contact/conversation resolution logic.
+ *
+ * Finds-or-creates the contact via `contact_identities` (same table
+ * startConversation() uses for anonymous website sessions) and the OPEN
+ * conversation for that contact+channel, then hands off to
+ * handleCustomerMessage() — the exact same function the widget uses, per
+ * spec section 13's "WhatsApp message -> Meta webhook -> WhatsApp adapter
+ * -> normalized Message -> Conversation -> AI Agent" flow.
+ */
+export async function startChannelConversation(input: {
+  tenantId: string;
+  channel: "WHATSAPP" | "INSTAGRAM" | "MESSENGER";
+  identityType: "WHATSAPP" | "INSTAGRAM" | "MESSENGER";
+  identityValue: string; // phone number / platform user id
+  contactName?: string;
+  content: string;
+}) {
+  const { tenantId, channel, identityType, identityValue, content } = input;
+
+  const [existingIdentity] = await db
+    .select()
+    .from(schema.contactIdentities)
+    .where(
+      and(
+        eq(schema.contactIdentities.tenantId, tenantId),
+        eq(schema.contactIdentities.type, identityType),
+        eq(schema.contactIdentities.value, identityValue)
+      )
+    )
+    .limit(1);
+
+  let contactId: string;
+  if (existingIdentity) {
+    contactId = existingIdentity.contactId;
+  } else {
+    contactId = generateId();
+    await db.insert(schema.contacts).values({ id: contactId, tenantId, name: input.contactName, phone: identityType === "WHATSAPP" ? identityValue : undefined });
+    await db.insert(schema.contactIdentities).values({ id: generateId(), tenantId, contactId, type: identityType, value: identityValue });
+  }
+
+  // First ACTIVE agent for this tenant — no per-channel agent assignment
+  // exists yet (docs/ONBOARDING_TASKS.md backlog), so this mirrors the
+  // "one primary agent" assumption the rest of onboarding makes for now.
+  const [agent] = await db.select().from(schema.agents).where(and(eq(schema.agents.tenantId, tenantId), eq(schema.agents.status, "ACTIVE"))).limit(1);
+  if (!agent) throw new Error("No active agent for this tenant");
+
+  let [conversation] = await db
+    .select()
+    .from(schema.conversations)
+    .where(and(eq(schema.conversations.tenantId, tenantId), eq(schema.conversations.contactId, contactId), eq(schema.conversations.channel, channel), eq(schema.conversations.status, "OPEN")))
+    .limit(1);
+
+  if (!conversation) {
+    const conversationId = generateId();
+    await db.insert(schema.conversations).values({ id: conversationId, tenantId, contactId, agentId: agent.id, channel });
+    await db.insert(schema.messages).values({ id: generateId(), tenantId, conversationId, sender: "AI", content: agent.greeting || `Hi! I'm ${agent.name}. How can I help you today?` });
+    await dispatchWebhooks(tenantId, "conversation.created", { conversationId });
+    [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
+  }
+
+  const result = await handleCustomerMessage({ tenantId, conversationId: conversation.id, content });
+  return { conversationId: conversation.id, contactId, ...result };
+}
+
+/**
  * Core conversation loop: customer message in -> AI reply + tool execution
  * out. Used by both the public widget endpoint and any future channel
  * webhook (WhatsApp/Instagram/Messenger) since they all funnel through the

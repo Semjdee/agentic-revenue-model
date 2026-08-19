@@ -47,8 +47,8 @@ const STEP_IS_BUILT: Record<Step, boolean> = {
   AGENT_SETUP: true,
   AGENT_TEST: true,
   CHANNEL_CONNECT: true,
-  HEALTH_CHECK: false,
-  GO_LIVE: false,
+  HEALTH_CHECK: true,
+  GO_LIVE: true,
 };
 
 interface Progress {
@@ -153,6 +153,8 @@ export function OnboardingWizard({ session }: { session: { tenantId: string; nam
           {progress.currentStep === "CHANNEL_CONNECT" && progress.agentId && (
             <ChannelConnectStep agentId={progress.agentId} tenant={tenant} onDone={load} />
           )}
+          {progress.currentStep === "HEALTH_CHECK" && <HealthCheckStep onDone={load} />}
+          {progress.currentStep === "GO_LIVE" && progress.agentId && <GoLiveStep agentId={progress.agentId} />}
           {!STEP_IS_BUILT[progress.currentStep] && (
             <UnbuiltStepFallback stepLabel={STEP_LABELS[progress.currentStep]} />
           )}
@@ -646,10 +648,21 @@ function ChannelConnectStep({ agentId, tenant, onDone }: { agentId: string; tena
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ verified: boolean; reason?: string } | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const [connectingWhatsApp, setConnectingWhatsApp] = useState(false);
 
   useEffect(() => {
     api.get<{ publicAgentId: string }>(`/api/internal/agents/${agentId}`).then((a) => setPublicAgentId(a.publicAgentId));
   }, [agentId]);
+
+  async function connectWhatsApp() {
+    setConnectingWhatsApp(true);
+    try {
+      const { authorizationUrl } = await api.post<{ authorizationUrl: string }>("/api/internal/integrations/whatsapp/connect");
+      window.location.href = authorizationUrl;
+    } catch {
+      setConnectingWhatsApp(false);
+    }
+  }
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const snippet = publicAgentId ? `<script\n  src="${origin}/widget.js"\n  data-agent="${publicAgentId}"\n  async>\n</script>` : "";
@@ -691,10 +704,27 @@ function ChannelConnectStep({ agentId, tenant, onDone }: { agentId: string; tena
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-[16px] font-semibold text-ink-primary">Connect a channel</h1>
-        <p className="text-[12.5px] text-ink-secondary mt-0.5">
-          Add this snippet to your website — that&apos;s the fastest way to go live today.
-        </p>
+        <h1 className="text-[16px] font-semibold text-ink-primary">Where do customers contact you?</h1>
+        <p className="text-[12.5px] text-ink-secondary mt-0.5">Connect just one to get started — add more anytime from Integrations.</p>
+      </div>
+
+      <div className="rounded-lg border border-black/10 dark:border-white/15 p-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#25D366] flex items-center justify-center text-white text-[12px] font-bold">W</div>
+          <div>
+            <p className="text-[13px] font-medium text-ink-primary">WhatsApp</p>
+            <p className="text-[11px] text-ink-muted">Official WhatsApp Business signup</p>
+          </div>
+        </div>
+        <Button size="sm" onClick={connectWhatsApp} disabled={connectingWhatsApp}>
+          {connectingWhatsApp ? "Redirecting…" : "Connect"}
+        </Button>
+      </div>
+
+      <p className="text-[11px] text-ink-muted text-center">— or —</p>
+
+      <div>
+        <p className="text-[13px] font-medium text-ink-primary mb-1.5">Website widget</p>
       </div>
       <div className="relative">
         <pre className="bg-black text-white text-[12px] rounded-lg p-4 overflow-x-auto">{snippet || "Loading…"}</pre>
@@ -718,6 +748,114 @@ function ChannelConnectStep({ agentId, tenant, onDone }: { agentId: string; tena
           {REASON_MESSAGES[result.reason ?? ""] ?? "We couldn't verify the connection."}
         </p>
       )}
+    </div>
+  );
+}
+
+interface HealthCategory {
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+function HealthCheckStep({ onDone }: { onDone: () => void }) {
+  const [result, setResult] = useState<{ ready: boolean; categories: HealthCategory[] } | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  async function run() {
+    setChecking(true);
+    const r = await api.get<{ ready: boolean; categories: HealthCategory[] }>("/api/internal/onboarding/health-check");
+    setResult(r);
+    setChecking(false);
+    if (r.ready) onDone();
+  }
+
+  useEffect(() => {
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run on mount only
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-[16px] font-semibold text-ink-primary">Health check</h1>
+        <p className="text-[12.5px] text-ink-secondary mt-0.5">Making sure everything&apos;s really ready before you go live.</p>
+      </div>
+      {checking && !result && <p className="text-[13px] text-ink-muted">Checking…</p>}
+      {result && (
+        <div className="space-y-2">
+          {result.categories.map((c) => (
+            <div key={c.key} className="flex items-start gap-2 rounded-lg border border-black/10 dark:border-white/15 p-2.5">
+              <span
+                className={clsx(
+                  "w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-[9px]",
+                  c.ok ? "bg-status-positive text-white" : "bg-status-critical/15 text-status-critical"
+                )}
+              >
+                {c.ok ? <Check size={10} /> : "!"}
+              </span>
+              <div>
+                <p className="text-[13px] font-medium text-ink-primary">{c.label}</p>
+                <p className="text-[11.5px] text-ink-muted">{c.detail}</p>
+              </div>
+            </div>
+          ))}
+          {!result.ready && (
+            <Button onClick={run} disabled={checking} className="mt-1">
+              {checking ? "Checking…" : "Check again"}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GoLiveStep({ agentId }: { agentId: string }) {
+  const router = useRouter();
+  const [going, setGoing] = useState(false);
+  const [live, setLive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function goLive() {
+    setGoing(true);
+    setError(null);
+    try {
+      await api.post("/api/internal/onboarding/go-live");
+      setLive(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not go live");
+    } finally {
+      setGoing(false);
+    }
+  }
+
+  if (live) {
+    return (
+      <div className="space-y-4 text-center py-6">
+        <h1 className="text-[18px] font-semibold text-ink-primary">Your AI Sales Agent is live 🎉</h1>
+        <p className="text-[13px] text-ink-secondary">It&apos;s now responding to real customers on your connected channel.</p>
+        <Button onClick={() => router.push("/dashboard")}>Go to your dashboard</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-[16px] font-semibold text-ink-primary">Ready to go live</h1>
+        <p className="text-[12.5px] text-ink-secondary mt-0.5">
+          This turns on real production processing — your agent starts replying to real customers.
+        </p>
+      </div>
+      {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
+      <Button onClick={goLive} disabled={going}>
+        {going ? "Going live…" : "Go Live"}
+      </Button>
+      <Button variant="ghost" onClick={() => router.push(`/agents/${agentId}`)}>
+        Review agent first
+      </Button>
     </div>
   );
 }

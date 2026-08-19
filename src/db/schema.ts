@@ -559,9 +559,24 @@ export const integrations = pgTable("integrations", {
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   provider: text("provider").notNull(), // whatsapp, instagram, messenger, hubspot, kommo, salesforce, zoho, odoo, google_ads, meta_ads, shopify, woocommerce, google_calendar, gmail, slack
   category: text("category").notNull(), // MESSAGING|CRM|ADVERTISING|ECOMMERCE|PRODUCTIVITY|OTHER
-  status: text("status").notNull().default("NOT_CONNECTED"), // CONNECTED|NOT_CONNECTED|ERROR
+  // PENDING/REAUTH_REQUIRED added for docs/ONBOARDING_SPEC.md section 6/13
+  // — real OAuth-style connectors (WhatsApp) pass through PENDING while
+  // exchanging/registering/testing, and only ever reach CONNECTED if every
+  // step actually succeeds (never a one-click fake). Additive to the
+  // existing CONNECTED|NOT_CONNECTED|ERROR values other providers' simple
+  // mock-connect flow still uses unchanged.
+  status: text("status").notNull().default("NOT_CONNECTED"), // CONNECTED|NOT_CONNECTED|PENDING|ERROR|REAUTH_REQUIRED
   isMock: boolean("is_mock").notNull().default(true),
   config: jsonb("config").$type<Record<string, unknown>>().default({}),
+  // OAuth-connector fields (docs/PHASE_2_EXTENSIONS_SPEC.md section 5,
+  // reused here rather than a parallel `integration_connections` table —
+  // this is the same "Integration Hub" the spec is describing, just
+  // already existing under this name). All additive/nullable.
+  externalAccountId: text("external_account_id"),
+  externalAccountName: text("external_account_name"),
+  scopes: jsonb("scopes").$type<string[]>().default([]),
+  webhookStatus: text("webhook_status"), // NOT_REGISTERED|HEALTHY|FAILED
+  connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),
   lastSyncAt: ts("last_sync_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
