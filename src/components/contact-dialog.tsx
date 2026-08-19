@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Badge, stageTone } from "@/components/ui/badge";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { channelLabel } from "@/lib/channel-labels";
-import { MessageCircle, Check, Pencil } from "lucide-react";
+import { MessageCircle, Check, Pencil, ArrowUpRight } from "lucide-react";
 
 // The "client dialog" — a full contact profile, not just the lead-stage
 // management view (see src/app/(app)/leads/page.tsx's LeadDialog, which
@@ -62,6 +63,7 @@ interface ContactDetailResponse {
 }
 
 export function ContactDialog({ contactId, onClose, onChanged }: { contactId: string; onClose: () => void; onChanged?: () => void }) {
+  const router = useRouter();
   const [data, setData] = useState<ContactDetailResponse | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", phone: "", company: "" });
@@ -91,6 +93,11 @@ export function ContactDialog({ contactId, onClose, onChanged }: { contactId: st
   }
 
   const title = data?.contact.name || data?.contact.phone || data?.contact.email || "Contact";
+
+  function openInInbox(conversationId: string) {
+    onClose();
+    router.push(`/inbox?conversationId=${conversationId}`);
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title={title} description={data ? `Client since ${new Date(data.contact.createdAt).toLocaleDateString()}` : undefined} widthClassName="max-w-xl">
@@ -153,7 +160,12 @@ export function ContactDialog({ contactId, onClose, onChanged }: { contactId: st
             {data.conversations.length === 0 && <p className="text-[12.5px] text-ink-muted">No conversations yet.</p>}
             <div className="space-y-1.5">
               {data.conversations.map((c) => (
-                <div key={c.id} className="flex items-center justify-between rounded-lg border border-black/[0.06] dark:border-white/[0.08] px-3 py-2">
+                <button
+                  key={c.id}
+                  onClick={() => openInInbox(c.id)}
+                  title="Open in Inbox"
+                  className="w-full flex items-center justify-between rounded-lg border border-black/[0.06] dark:border-white/[0.08] px-3 py-2 text-left hover:border-brand-300 hover:bg-black/[0.02] dark:hover:bg-white/[0.03]"
+                >
                   <div className="flex items-center gap-2 min-w-0">
                     <MessageCircle size={13} className="text-ink-muted shrink-0" />
                     <div className="min-w-0">
@@ -167,8 +179,9 @@ export function ContactDialog({ contactId, onClose, onChanged }: { contactId: st
                   <div className="flex items-center gap-1.5 shrink-0">
                     {c.unread && <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />}
                     <Badge tone={c.aiActive ? "brand" : "warning"}>{c.aiActive ? "AI" : "Human"}</Badge>
+                    <ArrowUpRight size={12} className="text-ink-muted" />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>

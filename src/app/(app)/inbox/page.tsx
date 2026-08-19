@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Bot, User, Send, UserCog, Flame } from "lucide-react";
+import { ContactDialog } from "@/components/contact-dialog";
+import { Bot, User, Send, UserCog, Flame, IdCard } from "lucide-react";
 import clsx from "clsx";
 
 interface ConversationListItem {
@@ -29,17 +31,51 @@ interface Message {
 
 const FILTERS = ["All", "Unread", "AI Active", "Human Active", "Hot Leads"] as const;
 
+// Deep-linkable so Contacts/Leads can jump straight into a conversation —
+// see ContactDialog's conversation rows, which push
+// `/inbox?conversationId=<id>`. Falls back to `contactId` (pick that
+// contact's most recent conversation) for callers that only know the
+// contact, not a specific conversation id.
 export default function InboxPage() {
+  return (
+    <Suspense fallback={null}>
+      <InboxInner />
+    </Suspense>
+  );
+}
+
+function InboxInner() {
+  const params = useSearchParams();
+  const deepLinkConversationId = params.get("conversationId");
+  const deepLinkContactId = params.get("contactId");
+
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [detail, setDetail] = useState<{ conversation: ConversationListItem; messages: Message[] } | null>(null);
   const [draft, setDraft] = useState("");
+  const [profileContactId, setProfileContactId] = useState<string | null>(null);
+  const [appliedDeepLink, setAppliedDeepLink] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   async function loadList() {
     const rows = await api.get<ConversationListItem[]>("/api/internal/conversations");
     setConversations(rows);
+    if (!appliedDeepLink && (deepLinkConversationId || deepLinkContactId)) {
+      setAppliedDeepLink(true);
+      setFilter("All");
+      if (deepLinkConversationId && rows.some((r) => r.id === deepLinkConversationId)) {
+        setSelectedId(deepLinkConversationId);
+        return;
+      }
+      if (deepLinkContactId) {
+        const match = rows.find((r) => r.contact.id === deepLinkContactId);
+        if (match) {
+          setSelectedId(match.id);
+          return;
+        }
+      }
+    }
     if (!selectedId && rows.length) setSelectedId(rows[0].id);
   }
 
@@ -162,15 +198,20 @@ export default function InboxPage() {
                     {detail.conversation.utmCampaign ? `via ${detail.conversation.utmCampaign}` : detail.conversation.utmSource || detail.conversation.channel}
                   </p>
                 </div>
-                {detail.conversation.aiActive ? (
-                  <Button size="sm" variant="secondary" onClick={takeover}>
-                    <UserCog size={13} /> Take Over
+                <div className="flex items-center gap-1.5">
+                  <Button size="sm" variant="secondary" onClick={() => setProfileContactId(detail.conversation.contact.id)}>
+                    <IdCard size={13} /> Client Profile
                   </Button>
-                ) : (
-                  <Button size="sm" variant="secondary" onClick={returnToAI}>
-                    <Bot size={13} /> Return to AI
-                  </Button>
-                )}
+                  {detail.conversation.aiActive ? (
+                    <Button size="sm" variant="secondary" onClick={takeover}>
+                      <UserCog size={13} /> Take Over
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={returnToAI}>
+                      <Bot size={13} /> Return to AI
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-3">
@@ -196,6 +237,9 @@ export default function InboxPage() {
           )}
         </div>
       </div>
+      {profileContactId && (
+        <ContactDialog contactId={profileContactId} onClose={() => setProfileContactId(null)} onChanged={() => selectedId && loadDetail(selectedId)} />
+      )}
     </div>
   );
 }
