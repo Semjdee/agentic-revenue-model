@@ -2,6 +2,7 @@ import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
 import { and, eq } from "drizzle-orm";
 import { logAudit } from "@/lib/audit";
+import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import type { ToolCall } from "./types";
 
 // ============================================================================
@@ -170,6 +171,10 @@ export async function executeToolCalls(
               source: "SYSTEM",
               after: { stage: call.parameters.stage ?? "NEW" },
             });
+            // docs/ONBOARDING_SPEC.md section 18/20 — activation milestone,
+            // fires at most once per tenant regardless of how many leads
+            // follow.
+            await logOnboardingEventOnce(state.tenantId, "first_lead_created", { leadId: newLeadId });
           }
           result = { leadId };
           break;
@@ -190,6 +195,7 @@ export async function executeToolCalls(
                 entityId: leadId,
                 source: "SYSTEM",
               });
+              await logOnboardingEventOnce(state.tenantId, "first_qualified_lead", { leadId });
             }
           }
           result = { leadId };
@@ -321,6 +327,7 @@ export async function executeToolCalls(
               source: "SYSTEM",
               after: { amount },
             });
+            await logOnboardingEventOnce(state.tenantId, "first_sale", { saleId, amount });
             result = { saleId };
           }
           break;

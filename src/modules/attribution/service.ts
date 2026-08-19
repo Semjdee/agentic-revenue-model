@@ -1,6 +1,7 @@
 import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
 import { eq } from "drizzle-orm";
+import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 
 // ============================================================================
 // Attribution Engine (spec section 12).
@@ -96,5 +97,8 @@ export async function computeAttributionForOpportunity(opportunityId: string, sa
 
   if (rows.length) {
     await db.insert(schema.attributionTouches).values(rows);
+    if (saleId) {
+      await logOnboardingEventOnce(opp.tenantId, "first_attributed_sale", { saleId, opportunityId: opp.id });
+    }
   }
 }

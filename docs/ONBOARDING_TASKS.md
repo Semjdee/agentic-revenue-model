@@ -244,29 +244,33 @@ anticipated.
       state (agent genuinely starts responding on the connected channel)
       when all pass.
 
-## Milestone 10 — TTFV + funnel analytics (admin-facing)
+## Milestone 10 — TTFV + funnel analytics (admin-facing) ✅ done, scoped tenant-level
 
-- [ ] Wire the remaining events from spec section 19 not yet logged by
-      earlier milestones: `first_real_conversation`,
-      `first_contact_created`, `first_lead_created`,
-      `first_qualified_lead`, `first_sale`, `first_attributed_sale` —
-      hook these into the existing conversation engine / lead /
-      opportunity / sale creation paths (`src/modules/conversations/engine.ts`,
-      relevant API routes) as a thin `logOnboardingEvent` call each,
-      guarded to fire only once per tenant (check `onboarding_events`
-      for an existing row of that type first).
-- [ ] `src/modules/onboarding/metrics.ts` — pure functions computing
-      TTFV (Account Created → first `first_real_conversation` event) and
-      the secondary Account→X metrics from spec section 20, plus
-      drop-off funnel counts per spec section 21. **No LLM call in this
-      file** — same discipline as every other metrics module in this
-      codebase.
-- [ ] Internal admin page (behind an admin-only role check — reuse
-      `src/lib/permissions.ts`, do not invent a new admin concept) under
-      `src/app/(app)/admin/onboarding/page.tsx` showing the metrics from
-      spec section 33.
-- [ ] **Definition of done**: metrics reflect real seeded/demo-journey
-      activity, not placeholder numbers.
+- [x] Wired the remaining events from spec section 19:
+      `first_real_conversation`, `first_contact_created` (both in
+      `src/modules/conversations/engine.ts`'s `startConversation()` and
+      the new `startChannelConversation()`), `first_lead_created`,
+      `first_qualified_lead`, `first_sale` (`src/modules/ai/actions.ts`),
+      `first_attributed_sale` (`src/modules/attribution/service.ts`).
+      Each guarded by `logOnboardingEventOnce()` so it fires at most once
+      per tenant.
+- [x] `src/modules/onboarding/metrics.ts` — `getTenantOnboardingMetrics()`
+      (TTFV + Account→GoLive/FirstSale) and `getStepCompletion()`. No LLM
+      call.
+- [x] **Deviation from this task's original wording**: built as a
+      tenant-scoped "Activation" tab on `/settings`
+      (`src/app/(app)/settings/page.tsx`), not a cross-tenant
+      `/admin/onboarding` page. This codebase has no "platform staff"
+      auth concept distinct from per-tenant roles —
+      `src/lib/permissions.ts` is entirely tenant-scoped by design, for
+      multi-tenant isolation. Building real cross-tenant admin access
+      (spec section 33's actual ask: SMS Consult staff viewing every
+      tenant's funnel) needs that auth concept designed first, not
+      bolted on under time pressure with an inadequately-secured
+      shortcut — see backlog below.
+- [x] **Definition of done**: verified against the demo-journey run and
+      manual test-tenant onboarding — metrics reflect real event
+      timestamps, not placeholder numbers.
 
 ## Milestone 11 — mobile, low-bandwidth, error-experience polish pass
 
@@ -285,6 +289,14 @@ anticipated.
 
 ## Backlog (explicitly deferred — document, don't silently skip)
 
+- [ ] **Cross-tenant platform-admin analytics** (spec section 33's
+      literal ask — SMS Consult staff viewing every tenant's onboarding
+      funnel/drop-off, not just their own). Needs a "platform staff" auth
+      concept designed first (distinct from the existing per-tenant
+      `src/lib/permissions.ts` roles) — Milestone 10 shipped the
+      tenant-scoped version (`/settings` → Activation tab) using existing
+      session auth safely instead of guessing at cross-tenant access
+      control under time pressure.
 - [ ] **Knowledge auto-extraction** (Scan My Website / Upload Product
       Catalogue / Upload Price List / Upload Business Documents, spec
       section 4) — needs a PDF-parsing library and a

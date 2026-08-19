@@ -7,6 +7,7 @@ import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
 import type { ConversationTurn } from "@/modules/ai/types";
 import { recordTrafficSession } from "@/modules/attribution/service";
+import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 
 export interface StartConversationInput {
   publicAgentId: string;
@@ -61,6 +62,7 @@ export async function startConversation(input: StartConversationInput) {
       type: "ANONYMOUS_SESSION",
       value: input.sessionId,
     });
+    await logOnboardingEventOnce(tenantId, "first_contact_created", { contactId });
   }
 
   const [existingConversation] = await db
@@ -119,6 +121,7 @@ export async function startConversation(input: StartConversationInput) {
   });
 
   await dispatchWebhooks(tenantId, "conversation.created", { conversationId });
+  await logOnboardingEventOnce(tenantId, "first_real_conversation", { conversationId, channel: input.channel });
 
   const messages = await db.select().from(schema.messages).where(eq(schema.messages.conversationId, conversationId));
   return { conversationId, contactId, messages, aiActive: true, tenantId };
@@ -169,6 +172,7 @@ export async function startChannelConversation(input: {
     contactId = generateId();
     await db.insert(schema.contacts).values({ id: contactId, tenantId, name: input.contactName, phone: identityType === "WHATSAPP" ? identityValue : undefined });
     await db.insert(schema.contactIdentities).values({ id: generateId(), tenantId, contactId, type: identityType, value: identityValue });
+    await logOnboardingEventOnce(tenantId, "first_contact_created", { contactId });
   }
 
   // First ACTIVE agent for this tenant — no per-channel agent assignment
@@ -188,6 +192,7 @@ export async function startChannelConversation(input: {
     await db.insert(schema.conversations).values({ id: conversationId, tenantId, contactId, agentId: agent.id, channel });
     await db.insert(schema.messages).values({ id: generateId(), tenantId, conversationId, sender: "AI", content: agent.greeting || `Hi! I'm ${agent.name}. How can I help you today?` });
     await dispatchWebhooks(tenantId, "conversation.created", { conversationId });
+    await logOnboardingEventOnce(tenantId, "first_real_conversation", { conversationId, channel });
     [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
   }
 

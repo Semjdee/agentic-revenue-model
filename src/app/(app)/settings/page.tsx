@@ -46,6 +46,9 @@ export default function SettingsPage() {
             <Tabs.Trigger value="audit" className={TAB_CLASS}>
               Audit Log
             </Tabs.Trigger>
+            <Tabs.Trigger value="activation" className={TAB_CLASS}>
+              Activation
+            </Tabs.Trigger>
           </Tabs.List>
 
           <Tabs.Content value="engine" className="max-w-xl">
@@ -56,6 +59,9 @@ export default function SettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="audit">
             <AuditTab />
+          </Tabs.Content>
+          <Tabs.Content value="activation" className="max-w-xl">
+            <ActivationTab />
           </Tabs.Content>
         </Tabs.Root>
       </div>
@@ -163,6 +169,84 @@ function AuditTab() {
         </tbody>
       </table>
       {rows.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No audit events yet.</p>}
+    </div>
+  );
+}
+
+interface OnboardingMetricsResponse {
+  accountCreatedAt: string | null;
+  ttfvSeconds: number | null;
+  timeToGoLiveSeconds: number | null;
+  timeToFirstSaleSeconds: number | null;
+  currentStep: string | null;
+  completedSteps: string[];
+  completedAt: string | null;
+  milestones: { event: string; occurredAt: string | null }[];
+}
+
+const MILESTONE_LABELS: Record<string, string> = {
+  signup_completed: "Account created",
+  workspace_created: "Workspace created",
+  business_profile_completed: "Business profile completed",
+  knowledge_import_completed: "Knowledge imported",
+  agent_generated: "AI agent created",
+  agent_test_completed: "Agent tested",
+  channel_connected: "Channel connected",
+  health_check_completed: "Health check passed",
+  go_live_clicked: "Went live",
+  agent_activated: "Agent activated",
+  first_real_conversation: "First real conversation",
+  first_contact_created: "First contact",
+  first_lead_created: "First lead",
+  first_qualified_lead: "First qualified lead",
+  first_sale: "First sale",
+  first_attributed_sale: "First attributed sale",
+};
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+// docs/ONBOARDING_SPEC.md sections 20/33 — Time To First Value + funnel
+// milestones. Tenant-scoped (see src/modules/onboarding/metrics.ts for
+// why this isn't the spec's literal cross-tenant admin dashboard yet).
+function ActivationTab() {
+  const [data, setData] = useState<OnboardingMetricsResponse | null>(null);
+
+  useEffect(() => {
+    api.get<OnboardingMetricsResponse>("/api/internal/onboarding/metrics").then(setData).catch(() => setData(null));
+  }, []);
+
+  if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="card p-3">
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide">Time to First Value</p>
+          <p className="text-[18px] font-semibold text-ink-primary mt-1">{formatDuration(data.ttfvSeconds)}</p>
+          <p className="text-[10.5px] text-ink-muted mt-0.5">Signup → first real conversation</p>
+        </div>
+        <div className="card p-3">
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide">Time to Go Live</p>
+          <p className="text-[18px] font-semibold text-ink-primary mt-1">{formatDuration(data.timeToGoLiveSeconds)}</p>
+        </div>
+        <div className="card p-3">
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide">Time to First Sale</p>
+          <p className="text-[18px] font-semibold text-ink-primary mt-1">{formatDuration(data.timeToFirstSaleSeconds)}</p>
+        </div>
+      </div>
+      <div className="card divide-y divide-black/[0.05] dark:divide-white/[0.05]">
+        {data.milestones.map((m) => (
+          <div key={m.event} className="px-4 py-2.5 flex items-center justify-between text-[12.5px]">
+            <span className={m.occurredAt ? "text-ink-primary" : "text-ink-muted"}>{MILESTONE_LABELS[m.event] ?? m.event}</span>
+            <span className="text-ink-muted">{m.occurredAt ? new Date(m.occurredAt).toLocaleString() : "Not yet"}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
