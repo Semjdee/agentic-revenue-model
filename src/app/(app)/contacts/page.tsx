@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
+import { ContactDialog } from "@/components/contact-dialog";
 
 interface Contact {
   id: string;
@@ -19,12 +20,17 @@ export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
+  const [openContactId, setOpenContactId] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     api.get<Contact[]>("/api/internal/contacts").then((rows) => {
       setContacts(rows);
       setLoading(false);
     });
+  }
+
+  useEffect(() => {
+    load();
   }, []);
 
   const filtered = contacts.filter((c) => {
@@ -58,8 +64,12 @@ export default function ContactsPage() {
             </thead>
             <tbody>
               {filtered.map((c) => (
-                <tr key={c.id} className="border-b border-black/[0.05] dark:border-white/[0.05] hover:bg-black/[0.02] dark:hover:bg-white/[0.03]">
-                  <td className="px-4 py-2.5 text-ink-primary font-medium">{c.name || "—"}</td>
+                <tr
+                  key={c.id}
+                  onClick={() => setOpenContactId(c.id)}
+                  className="border-b border-black/[0.05] dark:border-white/[0.05] hover:bg-black/[0.02] dark:hover:bg-white/[0.03] cursor-pointer"
+                >
+                  <td className="px-4 py-2.5 text-ink-primary font-medium hover:text-brand-600 hover:underline">{c.name || "—"}</td>
                   <td className="px-4 py-2.5 text-ink-secondary">{c.phone || "—"}</td>
                   <td className="px-4 py-2.5 text-ink-secondary">{c.email || "—"}</td>
                   <td className="px-4 py-2.5 text-ink-secondary">{c.company || "—"}</td>
@@ -71,6 +81,7 @@ export default function ContactsPage() {
           {!loading && filtered.length === 0 && <p className="text-[13px] text-ink-muted p-6 text-center">No contacts yet.</p>}
         </div>
       </div>
+      {openContactId && <ContactDialog contactId={openContactId} onClose={() => setOpenContactId(null)} onChanged={load} />}
     </div>
   );
 }

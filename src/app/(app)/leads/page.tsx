@@ -7,6 +7,7 @@ import { Badge, stageTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
+import { ContactDialog } from "@/components/contact-dialog";
 import { LEAD_STAGES } from "@/db/schema";
 import clsx from "clsx";
 
@@ -57,6 +58,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contactNames, setContactNames] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Lead | null>(null);
+  const [openContactId, setOpenContactId] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
 
   async function load() {
@@ -124,7 +126,16 @@ export default function LeadsPage() {
                 <div className="space-y-2">
                   {stageLeads.map((lead) => (
                     <button key={lead.id} onClick={() => setSelected(lead)} className="w-full text-left card p-3 hover:border-brand-300">
-                      <p className="text-[12.5px] font-medium text-ink-primary truncate">{contactNames[lead.contactId] || "Contact"}</p>
+                      <p
+                        role="link"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenContactId(lead.contactId);
+                        }}
+                        className="text-[12.5px] font-medium text-ink-primary truncate hover:text-brand-600 hover:underline w-fit"
+                      >
+                        {contactNames[lead.contactId] || "Contact"}
+                      </p>
                       <p className="text-[11px] text-ink-muted mt-0.5 truncate">{lead.productsDiscussed?.[0] || "—"}</p>
                       <div className="flex items-center justify-between mt-2 gap-1.5">
                         <Badge tone={stageTone(lead.stage)}>{lead.score} pts</Badge>
@@ -144,6 +155,7 @@ export default function LeadsPage() {
       </div>
 
       {selected && <LeadDialog lead={selected} contactName={contactNames[selected.contactId]} onClose={() => setSelected(null)} onChanged={load} />}
+      {openContactId && <ContactDialog contactId={openContactId} onClose={() => setOpenContactId(null)} onChanged={load} />}
     </div>
   );
 }
