@@ -78,6 +78,8 @@ export class MockCRMConnector implements CRMConnector {
   }
 }
 
+export const CRM_PROVIDERS = ["hubspot", "kommo", "salesforce", "zoho", "odoo", "custom_crm"] as const;
+
 export function getCRMConnector(provider: string): CRMConnector {
   // Real connectors (HubSpotConnector, KommoConnector, ...) would be added
   // here behind the same interface once API credentials are available.

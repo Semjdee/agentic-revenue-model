@@ -351,9 +351,30 @@ anticipated.
       refactor (both its connect flow and inbound webhook re-tested), a
       simulated inbound Instagram DM produced a real contact/lead/AI
       reply via the same engine path. Regression gate clean.
-- [ ] CRM connector onboarding, Google Ads self-connect + attribution,
-      billing/subscription self-service — remaining P1 per spec section
-      37, after every P0 milestone above is solid.
+- [x] **CRM connector onboarding — done (2026-08-19).** The
+      `CRMConnector` interface + `MockCRMConnector`
+      (`src/integrations/crm/`) existed from the original MVP but were
+      never wired to any route — genuinely dead scaffolding until now.
+      Since `MockCRMConnector` is already provider-agnostic (takes
+      `provider` as a constructor arg), built **one** dynamic
+      `[provider]` connect/callback route pair
+      (`src/app/api/internal/integrations/crm/[provider]/{connect,callback}`)
+      covering all six CRM providers (HubSpot/Kommo/Salesforce/Zoho/Odoo/
+      Custom API) at once, plus one shared mock-consent page
+      (`src/app/onboarding/crm-mock-consent/page.tsx`, provider-branded)
+      — never a raw "Enter API key" field, just "Which account should we
+      connect?" (spec section 3). Never marked CONNECTED unless
+      `authenticate()` + `testConnection()` + `registerWebhooks()` all
+      succeed, same discipline as WhatsApp/Instagram. `/integrations`
+      page routes all six through this real flow instead of the generic
+      one-click mock. Verified: unknown provider correctly 404s, wrong
+      state correctly rejected (400), and a real browser click-through
+      (not just curl) on Zoho went Connect → consent form → back to
+      `/integrations` → "Connected (mock)", zero console errors — same
+      for HubSpot via the API path. Regression gate clean.
+- [ ] Google Ads self-connect + attribution, billing/subscription
+      self-service — remaining P1 per spec section 37, after every P0
+      milestone above is solid.
 - [ ] TikTok, Advanced Attribution, Influencer Intelligence, Revenue
       Goal Agent, Additional AI Agents — P2, same as
       `docs/PHASE_2_TASKS.md`'s existing backlog for these.

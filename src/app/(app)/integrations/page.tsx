@@ -37,15 +37,18 @@ export default function IntegrationsPage() {
     load();
   }, []);
 
-  // Providers with a real staged OAuth connector (state/CSRF validation,
-  // webhook registration + testConnection gating before CONNECTED — see
-  // src/integrations/oauth/connect-flow.ts) route through that flow
-  // instead of the generic one-click mock-connect below. Every other
-  // provider on this page is outside the current onboarding priority's
-  // P0/P1 scope (docs/ONBOARDING_SPEC.md section 37) and keeps the
-  // original simple mock — real per-provider connectors get added here as
-  // each one is built, not all at once.
+  // Providers with a real staged connector (state validation, webhook
+  // registration + a real connection test gating CONNECTED — see
+  // src/integrations/oauth/connect-flow.ts for WhatsApp/Instagram and
+  // src/app/api/internal/integrations/crm/[provider]/** for CRM) route
+  // through that flow instead of the generic one-click mock-connect
+  // below. Every other provider on this page (Advertising/Ecommerce/
+  // Productivity) is outside the current onboarding priority's P0/P1
+  // scope (docs/ONBOARDING_SPEC.md section 37) and keeps the original
+  // simple mock — real per-provider connectors get added here as each
+  // one is built, not all at once.
   const OAUTH_PROVIDERS = new Set(["whatsapp", "instagram"]);
+  const CRM_PROVIDERS = new Set(["hubspot", "kommo", "salesforce", "zoho", "odoo", "custom_crm"]);
 
   async function toggle(card: IntegrationCard) {
     if (card.status === "CONNECTED") {
@@ -55,6 +58,11 @@ export default function IntegrationsPage() {
     }
     if (OAUTH_PROVIDERS.has(card.provider)) {
       const { authorizationUrl } = await api.post<{ authorizationUrl: string }>(`/api/internal/integrations/${card.provider}/connect`, { returnTo: "/integrations" });
+      window.location.href = authorizationUrl;
+      return;
+    }
+    if (CRM_PROVIDERS.has(card.provider)) {
+      const { authorizationUrl } = await api.post<{ authorizationUrl: string }>(`/api/internal/integrations/crm/${card.provider}/connect`, { returnTo: "/integrations" });
       window.location.href = authorizationUrl;
       return;
     }
