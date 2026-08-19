@@ -19,7 +19,7 @@ export default function RegisterPage() {
     setError(null);
     try {
       await api.post("/api/internal/auth/register", form);
-      router.push("/dashboard");
+      router.push("/onboarding");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");

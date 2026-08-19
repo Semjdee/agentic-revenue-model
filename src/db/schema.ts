@@ -33,6 +33,20 @@ export const tenants = pgTable("tenants", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   plan: text("plan").notNull().default("trial"),
+  // Business profile — captured by the onboarding wizard's "Tell us about
+  // your business" step (docs/ONBOARDING_SPEC.md section 4 Step 2). All
+  // nullable/additive: existing tenants (e.g. the seeded RayGrid demo)
+  // simply have these unset until edited. This is deliberately on
+  // `tenants` rather than `workspaces` since it's a one-per-business
+  // concept, same granularity as `name`/`plan` above.
+  industry: text("industry"),
+  country: text("country"),
+  currency: text("currency"),
+  timezone: text("timezone"),
+  websiteUrl: text("website_url"),
+  description: text("description"),
+  primaryObjective: text("primary_objective"),
+  primaryChannel: text("primary_channel"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
@@ -124,6 +138,17 @@ export const contactIdentities = pgTable(
 // ---------------------------------------------------------------------------
 // 5/6. AI AGENTS (Agent + AgentConfiguration merged — see BUILD_NOTES.md)
 // ---------------------------------------------------------------------------
+
+// Agent lifecycle (docs/ONBOARDING_SPEC.md addendum §A14 — creation and
+// activation are separate events). DRAFT/READY are new; existing rows
+// (and every row created before this migration) default to ACTIVE, so
+// this is purely additive — nothing that already worked stops working.
+// DRAFT = just created (e.g. by the guided-setup wizard), not yet
+// reviewed. READY = passed/would-pass a health check but the user hasn't
+// clicked Go Live yet. ACTIVE = live, processing real conversations.
+// PAUSED = was active, manually paused.
+export const AGENT_STATUSES = ["DRAFT", "READY", "ACTIVE", "PAUSED"] as const;
+
 export const agents = pgTable(
   "agents",
   {
@@ -147,7 +172,11 @@ export const agents = pgTable(
     greeting: text("greeting").default("Hi! How can I help you today?"),
     widgetColor: text("widget_color").default("#4F46E5"),
     launcherPosition: text("launcher_position").default("bottom-right"),
-    status: text("status").notNull().default("ACTIVE"), // ACTIVE | PAUSED
+    // Which path created this agent — informational only, never gates
+    // functionality (docs/ONBOARDING_SPEC.md addendum §A5: guided-created
+    // agents must be exactly as editable as manually-created ones).
+    creationMethod: text("creation_method").notNull().default("MANUAL"), // MANUAL | GUIDED
+    status: text("status").$type<(typeof AGENT_STATUSES)[number]>().notNull().default("ACTIVE"),
     createdAt: ts("created_at").notNull().defaultNow(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -640,6 +669,83 @@ export const auditLogs = pgTable(
     timestamp: ts("timestamp").notNull().defaultNow(),
   },
   (t) => ({ tenantIdx: index("audit_logs_tenant_idx").on(t.tenantId) })
+);
+
+// ---------------------------------------------------------------------------
+// 25. ZERO-TO-LIVE SELF-ONBOARDING (docs/ONBOARDING_SPEC.md, current top
+// priority as of 2026-08-19 — see HANDOFF.md)
+// ---------------------------------------------------------------------------
+
+// One row per tenant. Backs "save and resume" (spec section 22) — the
+// wizard is a step-router reading this, not a multi-page form that loses
+// state on refresh.
+export const ONBOARDING_STEPS = [
+  "ACCOUNT",
+  "BUSINESS_PROFILE",
+  "KNOWLEDGE_IMPORT",
+  "AGENT_SETUP",
+  "AGENT_TEST",
+  "CHANNEL_CONNECT",
+  "HEALTH_CHECK",
+  "GO_LIVE",
+] as const;
+
+export const onboardingProgress = pgTable("onboarding_progress", {
+  id: id(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }).unique(),
+  currentStep: text("current_step").$type<(typeof ONBOARDING_STEPS)[number]>().notNull().default("ACCOUNT"),
+  completedSteps: jsonb("completed_steps").$type<string[]>().default([]),
+  // Which agent this onboarding run is setting up — set once the
+  // AGENT_SETUP step picks/creates one (guided, manual, or an existing
+  // agent per addendum §A9's "Use Existing Agent"), then read by
+  // AGENT_TEST/CHANNEL_CONNECT/HEALTH_CHECK/GO_LIVE.
+  agentId: text("agent_id").references(() => agents.id, { onDelete: "set null" }),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  completedAt: ts("completed_at"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+// Append-only product-analytics log for the onboarding funnel (spec
+// section 19 — signup_started, channel_connected, first_sale, etc.).
+// Deliberately separate from `audit_logs`: that table is the compliance/
+// security record of real business actions (see src/lib/audit.ts);
+// this one is funnel instrumentation and may include pre-tenant events.
+// Kept as free-text `event` (like `attribution_touches.source` elsewhere
+// in this file) rather than a hard enum so new events don't need a
+// migration — see docs/ONBOARDING_SPEC.md section 19 for the current
+// vocabulary.
+export const onboardingEvents = pgTable(
+  "onboarding_events",
+  {
+    id: id(),
+    tenantId: text("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: index("onboarding_events_tenant_idx").on(t.tenantId),
+    eventIdx: index("onboarding_events_event_idx").on(t.event),
+  })
+);
+
+// docs/ONBOARDING_TASKS.md Milestone 6 — sandboxed agent-test feedback.
+// Never auto-applied to the live agent config (spec section 15) — a
+// human reviews `correctionNote` and edits the agent explicitly.
+export const agentTestFeedback = pgTable(
+  "agent_test_feedback",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+    testMessage: text("test_message").notNull(),
+    aiResponse: text("ai_response").notNull(),
+    verdict: text("verdict").$type<"GOOD" | "NEEDS_IMPROVEMENT">().notNull(),
+    correctionNote: text("correction_note"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    appliedAt: ts("applied_at"),
+  },
+  (t) => ({ agentIdx: index("agent_test_feedback_agent_idx").on(t.agentId) })
 );
 
 // ---------------------------------------------------------------------------

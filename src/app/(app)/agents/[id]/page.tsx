@@ -8,6 +8,7 @@ import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { TagListEditor } from "@/components/tag-list-editor";
+import { TestAgentPanel } from "@/components/test-agent-panel";
 import { Badge } from "@/components/ui/badge";
 import { Check, Copy } from "lucide-react";
 
@@ -90,6 +91,7 @@ export default function AgentDetailPage() {
             <Tabs.Trigger value="rules" className={TAB_CLASS}>Qualification & Rules</Tabs.Trigger>
             <Tabs.Trigger value="products" className={TAB_CLASS}>Products</Tabs.Trigger>
             <Tabs.Trigger value="widget" className={TAB_CLASS}>Widget & Embed</Tabs.Trigger>
+            <Tabs.Trigger value="test" className={TAB_CLASS}>Test Agent</Tabs.Trigger>
           </Tabs.List>
 
           <Tabs.Content value="config" className="max-w-xl space-y-4">
@@ -146,6 +148,13 @@ export default function AgentDetailPage() {
 
           <Tabs.Content value="widget" className="max-w-xl">
             <WidgetTab agent={agent} />
+          </Tabs.Content>
+
+          <Tabs.Content value="test" className="max-w-xl">
+            {/* Same sandbox used by the onboarding wizard (docs/ONBOARDING_SPEC.md
+                addendum §A13 — testing must remain available after onboarding,
+                for every agent, always). */}
+            <TestAgentPanel agentId={agent.id} />
           </Tabs.Content>
         </Tabs.Root>
       </div>

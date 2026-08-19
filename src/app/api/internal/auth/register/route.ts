@@ -6,6 +6,7 @@ import { hashPassword, setSessionCookie } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
 import { eq } from "drizzle-orm";
 import { logAudit } from "@/lib/audit";
+import { initOnboardingProgress, advanceOnboardingStep, logOnboardingEvent } from "@/modules/onboarding/service";
 
 const bodySchema = z.object({
   companyName: z.string().min(2),
@@ -45,6 +46,16 @@ export async function POST(req: NextRequest) {
   });
 
   await logAudit({ tenantId, userId, action: "tenant.created", entity: "tenant", entityId: tenantId, source: "APP" });
+
+  // Zero-to-live self-onboarding (docs/ONBOARDING_SPEC.md) starts here —
+  // every fresh signup gets a progress row + funnel events immediately,
+  // not as an afterthought bolted onto some later step.
+  await initOnboardingProgress(tenantId);
+  await logOnboardingEvent(tenantId, "signup_completed", { email });
+  await logOnboardingEvent(tenantId, "workspace_created", { workspaceId });
+  // Reaching this line means account + workspace genuinely exist — mark
+  // ACCOUNT done and land the wizard on BUSINESS_PROFILE next.
+  await advanceOnboardingStep(tenantId, "ACCOUNT", "BUSINESS_PROFILE");
 
   await setSessionCookie({ userId, tenantId, role: "OWNER", email, name });
   return jsonOk({ tenantId, userId });

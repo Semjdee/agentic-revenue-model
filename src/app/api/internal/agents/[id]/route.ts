@@ -19,7 +19,7 @@ const patchSchema = z.object({
   escalationConditions: z.array(z.string()).optional(),
   salesRules: z.array(z.string()).optional(),
   widgetColor: z.string().optional(),
-  status: z.enum(["ACTIVE", "PAUSED"]).optional(),
+  status: z.enum(schema.AGENT_STATUSES).optional(),
 });
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
