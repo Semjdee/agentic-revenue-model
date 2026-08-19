@@ -3,22 +3,29 @@ import { z } from "zod";
 import { jsonError, jsonOk, rateLimit } from "@/lib/api";
 import { startConversation } from "@/modules/conversations/engine";
 
-const bodySchema = z.object({
-  publicAgentId: z.string(),
-  sessionId: z.string(),
-  channel: z.enum(["WEBSITE", "WHATSAPP", "INSTAGRAM", "MESSENGER"]).default("WEBSITE"),
-  landingPage: z.string().optional(),
-  referringUrl: z.string().optional(),
-  currentPage: z.string().optional(),
-  utmSource: z.string().optional(),
-  utmMedium: z.string().optional(),
-  utmCampaign: z.string().optional(),
-  utmContent: z.string().optional(),
-  utmTerm: z.string().optional(),
-  gclid: z.string().optional(),
-  fbclid: z.string().optional(),
-  consentAcknowledged: z.boolean().default(false),
-});
+const bodySchema = z
+  .object({
+    // Legacy <script data-agent="...">; new-style <script data-widget="...">
+    // (multi-agent-routing spec Part A §5). Exactly one must be present —
+    // startConversation() resolves either through the same Widget
+    // machinery either way, see modules/conversations/engine.ts.
+    publicAgentId: z.string().optional(),
+    publicWidgetId: z.string().optional(),
+    sessionId: z.string(),
+    channel: z.enum(["WEBSITE", "WHATSAPP", "INSTAGRAM", "MESSENGER"]).default("WEBSITE"),
+    landingPage: z.string().optional(),
+    referringUrl: z.string().optional(),
+    currentPage: z.string().optional(),
+    utmSource: z.string().optional(),
+    utmMedium: z.string().optional(),
+    utmCampaign: z.string().optional(),
+    utmContent: z.string().optional(),
+    utmTerm: z.string().optional(),
+    gclid: z.string().optional(),
+    fbclid: z.string().optional(),
+    consentAcknowledged: z.boolean().default(false),
+  })
+  .refine((v) => Boolean(v.publicAgentId || v.publicWidgetId), { message: "publicAgentId or publicWidgetId is required" });
 
 // Creates (or resumes) a widget conversation. This is the entry point of the
 // "Advertising -> Conversation -> AI Sales Agent" loop the whole platform is

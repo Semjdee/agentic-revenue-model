@@ -183,6 +183,102 @@ export const agents = pgTable(
   (t) => ({ tenantIdx: index("agents_tenant_idx").on(t.tenantId) })
 );
 
+// ---------------------------------------------------------------------------
+// MULTI-AGENT WIDGET ROUTING (Part A of the multi-agent-routing spec) —
+// Channels are separate from AI Agents. A Widget is a communication
+// channel's routing configuration; WidgetAgent links it to the Agent(s)
+// (already-existing production entities, never duplicated) allowed to
+// answer through it. See src/modules/widgets/router.ts (AgentRouter) and
+// src/modules/widgets/migrate.ts for how existing single-agent widgets
+// (the `<script data-agent="...">` embed every agent already has today)
+// become SINGLE_AGENT-mode Widget rows — additive, non-breaking, no
+// existing embed needs to change.
+// ---------------------------------------------------------------------------
+export const WIDGET_ROUTING_MODES = ["SINGLE_AGENT", "INTENT_ROUTING", "RULE_BASED", "MENU_SELECTION", "HYBRID"] as const;
+export const WIDGET_STATUSES = ["ACTIVE", "PAUSED"] as const;
+
+export const widgets = pgTable(
+  "widgets",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    // New-style embed identifier: <script data-widget="...">. Legacy
+    // <script data-agent="..."> installs keep resolving straight through
+    // agents.publicAgentId (see startConversation() in
+    // src/modules/conversations/engine.ts) — this column is never used to
+    // satisfy a legacy embed, only new ones.
+    publicWidgetId: text("public_widget_id").notNull().unique(),
+    name: text("name").notNull().default("Website Widget"),
+    allowedDomains: jsonb("allowed_domains").$type<string[]>().default([]),
+    logo: text("logo"),
+    brandColour: text("brand_colour"),
+    greeting: text("greeting"),
+    launcherPosition: text("launcher_position").default("bottom-right"),
+    defaultAgentId: text("default_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    routingMode: text("routing_mode").$type<(typeof WIDGET_ROUTING_MODES)[number]>().notNull().default("SINGLE_AGENT"),
+    fallbackAgentId: text("fallback_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    status: text("status").$type<(typeof WIDGET_STATUSES)[number]>().notNull().default("ACTIVE"),
+    consentConfiguration: jsonb("consent_configuration").$type<Record<string, unknown>>().default({}),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({ tenantIdx: index("widgets_tenant_idx").on(t.tenantId) })
+);
+
+export const widgetAgents = pgTable(
+  "widget_agents",
+  {
+    id: id(),
+    widgetId: text("widget_id").notNull().references(() => widgets.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    priority: integer("priority").notNull().default(0),
+    // Free-text role label (e.g. "SALES", "SUPPORT", "PRODUCT") plus a
+    // plain-English description the deterministic router matches keywords
+    // from (spec Part A §10: rules before a classifier before an LLM —
+    // see src/modules/widgets/router.ts).
+    routingRole: text("routing_role"),
+    routingDescription: text("routing_description"),
+    allowedIntents: jsonb("allowed_intents").$type<string[]>().default([]),
+    restrictedIntents: jsonb("restricted_intents").$type<string[]>().default([]),
+    fallbackPriority: integer("fallback_priority").notNull().default(0),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    widgetIdx: index("widget_agents_widget_idx").on(t.widgetId),
+    uniqueWidgetAgent: uniqueIndex("widget_agents_widget_agent_unique").on(t.widgetId, t.agentId),
+  })
+);
+
+// Tracks every routing decision the AgentRouter makes — spec Part A §9's
+// "output: selected_agent_id, routing_reason, confidence, fallback_agent_id,
+// routing_timestamp", and the audit trail for handoff-loop detection (§26).
+export const AGENT_HANDOFF_STOP_REASONS = ["MAX_HANDOFFS_EXCEEDED", "REPEATED_PAIR_LOOP"] as const;
+
+export const agentRoutingDecisions = pgTable(
+  "agent_routing_decisions",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    widgetId: text("widget_id").references(() => widgets.id, { onDelete: "set null" }),
+    conversationId: text("conversation_id"),
+    selectedAgentId: text("selected_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    fallbackAgentId: text("fallback_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    routingReason: text("routing_reason").notNull(), // e.g. "existing_assignment" | "single_agent_mode" | "rule_match:<role>" | "no_match_fallback"
+    confidence: numeric("confidence"), // 0..1, only meaningful for rule/classifier matches
+    // Set only when this decision was itself a handoff stopped for looping
+    // (spec §26) — null on every normal routing decision.
+    handoffStopReason: text("handoff_stop_reason").$type<(typeof AGENT_HANDOFF_STOP_REASONS)[number] | null>(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: index("agent_routing_decisions_tenant_idx").on(t.tenantId),
+    conversationIdx: index("agent_routing_decisions_conversation_idx").on(t.conversationId),
+  })
+);
+
 export const ACTION_PERMISSION_MODES = ["AUTOMATIC", "APPROVAL_REQUIRED", "DISABLED"] as const;
 
 // 6. AI TOOL/ACTION SYSTEM — audit trail of every tool call the AI attempts
@@ -291,6 +387,13 @@ export const conversations = pgTable(
     tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
     contactId: text("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     agentId: text("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    // Which Widget (below) this conversation came in through — null for
+    // conversations created before this column existed, and for
+    // WhatsApp/Instagram/Messenger conversations (those channels don't
+    // route through a Widget yet — see modules/widgets/router.ts's
+    // honest-scope note). Used to re-run AgentRouter with real customer
+    // intent on the first inbound message for a multi-agent widget.
+    widgetId: text("widget_id").references(() => widgets.id, { onDelete: "set null" }),
     channel: text("channel").$type<(typeof CHANNELS)[number]>().notNull(),
     status: text("status").notNull().default("OPEN"), // OPEN|WON|LOST|CLOSED
     aiActive: boolean("ai_active").notNull().default(true), // false = human took over

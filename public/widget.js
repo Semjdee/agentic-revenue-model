@@ -1,15 +1,23 @@
 /**
  * AI Revenue Agent Platform — Embeddable Customer Widget
  *
- * Installed on any website via:
- *   <script src="https://cdn.platform.com/widget.js" data-agent="PUBLIC_AGENT_ID" async></script>
+ * Installed on any website via either:
+ *   <script src="https://cdn.platform.com/widget.js" data-agent="PUBLIC_AGENT_ID" async></script>   (legacy — still fully supported)
+ *   <script src="https://cdn.platform.com/widget.js" data-widget="PUBLIC_WIDGET_ID" async></script>  (new — multi-agent-routing spec Part A §5)
+ *
+ * Existing installs using data-agent are NOT required to change anything —
+ * they keep resolving to the exact same agent they always have (see
+ * ensureLegacyWidgetForAgent in src/modules/widgets/service.ts). data-widget
+ * is only for new installs or a tenant deliberately opting into multi-agent
+ * routing.
  *
  * Independent of the back-office app (spec section 1): this is a
  * self-contained, framework-free script. It renders inside a Shadow DOM so
  * host-site CSS can never leak in or out. Only the public, restricted
- * `data-agent` identifier is ever exposed in the page source — no secret
- * credentials are embedded here (spec: "Do not expose secret credentials in
- * browser code. Use only restricted public widget identifiers.").
+ * `data-agent`/`data-widget` identifier is ever exposed in the page source —
+ * no secret credentials are embedded here (spec: "Do not expose secret
+ * credentials in browser code. Use only restricted public widget
+ * identifiers.").
  */
 (function () {
   "use strict";
@@ -20,10 +28,16 @@
   })();
 
   var AGENT_ID = currentScript.getAttribute("data-agent");
-  if (!AGENT_ID) {
-    console.error("[AI Revenue Agent widget] Missing data-agent attribute.");
+  var WIDGET_ID = currentScript.getAttribute("data-widget");
+  if (!AGENT_ID && !WIDGET_ID) {
+    console.error("[AI Revenue Agent widget] Missing data-agent or data-widget attribute.");
     return;
   }
+  // Storage/session namespace — legacy installs keep their existing
+  // AGENT_ID-based keys unchanged (so returning visitors don't lose their
+  // in-progress conversation on redeploy); new data-widget installs get
+  // their own WIDGET_ID-based namespace.
+  var STORAGE_ID = WIDGET_ID || AGENT_ID;
   var API_BASE = (function () {
     try {
       return new URL(currentScript.src).origin;
@@ -38,7 +52,7 @@
   }
 
   function getOrCreateSessionId() {
-    var key = "ara_session_id_" + AGENT_ID;
+    var key = "ara_session_id_" + STORAGE_ID;
     var existing = window.localStorage.getItem(key);
     if (existing) return existing;
     var id = "sess_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -47,7 +61,7 @@
   }
 
   function getFirstLandingPage() {
-    var key = "ara_first_landing_" + AGENT_ID;
+    var key = "ara_first_landing_" + STORAGE_ID;
     var existing = window.localStorage.getItem(key);
     if (existing) return existing;
     window.localStorage.setItem(key, window.location.href);
@@ -193,7 +207,8 @@
 
   async function loadConfig() {
     try {
-      var res = await fetch(API_BASE + "/api/public/agents/" + AGENT_ID);
+      var url = WIDGET_ID ? API_BASE + "/api/public/widgets/" + WIDGET_ID : API_BASE + "/api/public/agents/" + AGENT_ID;
+      var res = await fetch(url);
       var json = await res.json();
       if (json.data) {
         config = json.data;
@@ -213,7 +228,8 @@
 
   async function startConversation() {
     var body = {
-      publicAgentId: AGENT_ID,
+      publicAgentId: WIDGET_ID ? undefined : AGENT_ID,
+      publicWidgetId: WIDGET_ID || undefined,
       sessionId: sessionId,
       channel: "WEBSITE",
       landingPage: getFirstLandingPage(),

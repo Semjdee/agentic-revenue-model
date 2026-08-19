@@ -10,9 +10,17 @@ import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
 import type { ConversationTurn } from "@/modules/ai/types";
 import { recordTrafficSession } from "@/modules/attribution/service";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
+import { ensureLegacyWidgetForAgent, firstEnabledWidgetAgent } from "@/modules/widgets/service";
+import { routeConversation } from "@/modules/widgets/router";
 
 export interface StartConversationInput {
-  publicAgentId: string;
+  /** Legacy embed: <script data-agent="..."> — still fully supported,
+   * resolves through the same Widget machinery as a new install (see
+   * ensureLegacyWidgetForAgent) so it's one code path, not two. */
+  publicAgentId?: string;
+  /** New embed: <script data-widget="..."> (multi-agent-routing spec
+   * Part A §5). Exactly one of publicAgentId/publicWidgetId must be set. */
+  publicWidgetId?: string;
   sessionId: string;
   channel: "WEBSITE" | "WHATSAPP" | "INSTAGRAM" | "MESSENGER";
   landingPage?: string;
@@ -35,7 +43,26 @@ export interface StartConversationInput {
  * demo-journey script so both exercise identical logic.
  */
 export async function startConversation(input: StartConversationInput) {
-  const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.publicAgentId, input.publicAgentId)).limit(1);
+  let agent: typeof schema.agents.$inferSelect | undefined;
+  let widgetId: string | null = null;
+
+  if (input.publicWidgetId) {
+    const [widget] = await db.select().from(schema.widgets).where(and(eq(schema.widgets.publicWidgetId, input.publicWidgetId), eq(schema.widgets.status, "ACTIVE"))).limit(1);
+    if (!widget) throw new Error("Unknown or inactive widget");
+    widgetId = widget.id;
+    // The widget opens before the customer has typed anything, so there's
+    // no message yet to route on — pick the widget's default (or
+    // top-priority enabled) agent to send the greeting. Real routing on
+    // customer intent happens once, on their first message (see
+    // handleCustomerMessage below).
+    const initialAgentId = widget.defaultAgentId ?? (await firstEnabledWidgetAgent(widget.id));
+    if (!initialAgentId) throw new Error("Widget has no agent configured");
+    [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, initialAgentId)).limit(1);
+  } else if (input.publicAgentId) {
+    [agent] = await db.select().from(schema.agents).where(eq(schema.agents.publicAgentId, input.publicAgentId)).limit(1);
+    if (agent) widgetId = await ensureLegacyWidgetForAgent(agent.tenantId, agent.id);
+  }
+
   if (!agent || agent.status !== "ACTIVE") throw new Error("Unknown or inactive agent");
   const tenantId = agent.tenantId;
 
@@ -99,6 +126,7 @@ export async function startConversation(input: StartConversationInput) {
     tenantId,
     contactId,
     agentId: agent.id,
+    widgetId,
     channel: input.channel,
     sessionId: input.sessionId,
     landingPage: input.landingPage,
@@ -234,6 +262,42 @@ export async function handleCustomerMessage(params: {
     return { aiReplied: false, aiActive: conversation.aiActive, duplicateMessage: true };
   }
 
+  // Multi-agent re-routing (spec Part A §9-12): the conversation's agent
+  // was picked without seeing the customer's actual message (the widget
+  // opens before they've typed anything — see startConversation above).
+  // On the customer's FIRST real message, and only then, re-run
+  // AgentRouter with genuine intent. Every message after this one keeps
+  // whichever agent that decision lands on — continuity is the router's
+  // own first rule, so this never flip-flops mid-conversation. No-op for
+  // SINGLE_AGENT widgets and for channels without a widgetId (WhatsApp/
+  // Instagram/Messenger — see router.ts's honest-scope note).
+  let resolvedAgentId = conversation.agentId;
+  if (conversation.widgetId) {
+    const [priorCustomerMessage] = await db
+      .select({ id: schema.messages.id })
+      .from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.sender, "CUSTOMER")))
+      .limit(1);
+    if (!priorCustomerMessage) {
+      const [widget] = await db.select().from(schema.widgets).where(eq(schema.widgets.id, conversation.widgetId)).limit(1);
+      if (widget && widget.routingMode !== "SINGLE_AGENT") {
+        // existingAgentId is deliberately null here, not conversation.agentId:
+        // the agent currently on the conversation is only the PROVISIONAL
+        // one picked to send the greeting (see startConversation above),
+        // not a real routing decision yet — the router's own continuity
+        // rule must not treat it as one, or first-message routing could
+        // never override it. A genuine reassignment mid-conversation
+        // (once that's a real code path) would pass the true existing
+        // agent instead.
+        const decision = await routeConversation({ tenantId, widgetId: widget.id, conversationId, existingAgentId: null, latestMessage: content });
+        if (decision.selectedAgentId !== conversation.agentId) {
+          resolvedAgentId = decision.selectedAgentId;
+          await db.update(schema.conversations).set({ agentId: resolvedAgentId, updatedAt: new Date() }).where(eq(schema.conversations.id, conversationId));
+        }
+      }
+    }
+  }
+
   await db.insert(schema.messages).values({
     id: generateId(),
     tenantId,
@@ -254,8 +318,8 @@ export async function handleCustomerMessage(params: {
     return { aiReplied: false, aiActive: false };
   }
 
-  const [agent] = conversation.agentId
-    ? await db.select().from(schema.agents).where(eq(schema.agents.id, conversation.agentId)).limit(1)
+  const [agent] = resolvedAgentId
+    ? await db.select().from(schema.agents).where(eq(schema.agents.id, resolvedAgentId)).limit(1)
     : [null];
   if (!agent) return { aiReplied: false, aiActive: conversation.aiActive };
 
