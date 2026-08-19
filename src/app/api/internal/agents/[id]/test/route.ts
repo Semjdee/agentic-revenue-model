@@ -35,6 +35,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return jsonOk(result);
   } catch (err) {
     if (err instanceof Error && err.message === "Agent not found") return jsonError("Agent not found", 404);
+    if (err instanceof Error && err.message === "OUT_OF_CREDITS") {
+      return jsonError("You're out of AI credits — buy more to keep testing and going live.", 402, "OUT_OF_CREDITS");
+    }
     throw err;
   }
 }

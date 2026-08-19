@@ -372,9 +372,24 @@ anticipated.
       (not just curl) on Zoho went Connect → consent form → back to
       `/integrations` → "Connected (mock)", zero console errors — same
       for HubSpot via the API path. Regression gate clean.
-- [ ] Google Ads self-connect + attribution, billing/subscription
-      self-service — remaining P1 per spec section 37, after every P0
-      milestone above is solid.
+- [x] **AI usage credits & margin protection — done (2026-08-19).**
+      Free tier (1,000 credits) + paid tier (2,500 credits / $20)
+      confirmed with the product owner. Real metering
+      (`src/modules/billing/`) against actual Anthropic token costs,
+      Haiku-4.5-default/Sonnet-5-escalation model routing, prompt
+      caching, and a graceful human-handoff when credits hit 0 — not
+      the payment-collection half of "billing/subscription
+      self-service" itself. See BUILD_NOTES.md §9f for the full margin
+      math and verification.
+- [ ] **Real payment collection** (Stripe or similar) to actually grant
+      credits on purchase — the "Buy 2,500 credits — $20" button on
+      `/settings` → Credits & Usage is real UI wired to a real,
+      auditable request record, but deliberately does not grant credits
+      yet (see BUILD_NOTES.md §9f — crediting an account without a real
+      payment would be fabricating a transaction). This is the actual
+      remaining piece of "billing/subscription self-service".
+- [ ] Google Ads self-connect + attribution — remaining P1 per spec
+      section 37, after every P0 milestone above is solid.
 - [ ] TikTok, Advanced Attribution, Influencer Intelligence, Revenue
       Goal Agent, Additional AI Agents — P2, same as
       `docs/PHASE_2_TASKS.md`'s existing backlog for these.

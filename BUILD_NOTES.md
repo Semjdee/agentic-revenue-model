@@ -336,6 +336,74 @@ verification each milestone got. Next up per spec section 37's priority
 order: P1 (Instagram self-connect, CRM connector onboarding, Google Ads
 self-connect + attribution, billing/subscription self-service).
 
+## 9f. AI usage credits & margin protection (2026-08-19)
+
+Every AI reply costs real Anthropic API money; this is the metering and
+enforcement layer that makes that sustainable, confirmed with the product
+owner: **free tier = 1,000 credits, paid tier = 2,500 credits for $20**.
+
+**The real numbers this is built on** (Anthropic's current rate card,
+checked 2026-08-19 — not the temporary Sonnet 5 intro pricing, which
+expires 2026-08-31 and would have made the margin math stale within
+days): Sonnet 5 is $3/$15 per million input/output tokens, Haiku 4.5 is
+$1/$5. A typical sales-agent turn in this app runs ~2,000 input / ~250
+output tokens. Routing every reply through Sonnet 5 at this platform's
+$0.008/credit revenue would run at break-even-to-negative margin before
+infrastructure costs are even counted — so this **is not** "1 credit = 1
+reply":
+
+- **Model routing** (`src/modules/billing/model-router.ts`) — Haiku 4.5
+  handles routine turns by default; a deterministic, zero-extra-cost
+  heuristic (lead score ≥60, price-negotiation/complaint keywords, or a
+  match against the agent's own plain-English escalation rules) routes
+  to Sonnet 5 for the turns where quality genuinely matters more than
+  the ~5x cost difference. Verified with 5 hand-checked cases, all pass.
+- **Credit pricing** (`src/modules/billing/pricing.ts`) — credits are
+  charged from the *real dollar cost* of each call (`computeApiCostUsd`,
+  using actual token counts including cache read/write), not a flat
+  per-reply charge, converted via a fixed `$/credit` ceiling
+  (`MAX_COST_USD_PER_CREDIT = $0.0024`, derived from a 70% target gross
+  margin on AI usage at the stated $0.008/credit price) — verified this
+  produces 75%+ realized margin across cached/uncached and Haiku/Sonnet
+  scenarios (rounding a call up to at least 1 credit means margin can
+  only run *above* target, never below — the safe direction to be
+  wrong in).
+- **Prompt caching** — `src/modules/ai/anthropic-provider.ts` now marks
+  the system prompt (agent instructions + product catalog + knowledge,
+  identical across every turn of a conversation) with `cache_control`,
+  a real cost reduction this margin math assumes is on. Also fixed:
+  the model was hardcoded to the retired `claude-sonnet-4-5`; now
+  defaults to `claude-haiku-4-5` and accepts a per-call override.
+- **Enforcement** (`src/modules/billing/ledger.ts`, wired into
+  `src/modules/conversations/engine.ts` and `src/modules/ai/sandbox.ts`)
+  — every real AI call is gated by `checkCredits()` before it runs and
+  metered by `chargeUsage()` after. A tenant at 0 credits doesn't get a
+  silent failure or an error page: the conversation hands off to a human
+  gracefully ("let me get one of our team to help you"), `aiActive`
+  flips off, and a real task is created. Sandbox/test-agent calls are
+  metered identically — they hit the same real provider and cost the
+  same real money, so a testing loophole would have been a margin hole.
+  Verified live: zeroing a tenant's balance and sending a real widget
+  message produced the exact graceful handoff, not a crash; the balance
+  and ledger were untouched by MockAIProvider replies (genuinely free,
+  not silently charged).
+- **Visibility** — a new "Credits & Usage" tab on `/settings` shows the
+  real balance, a low-balance warning, and the actual ledger (every
+  grant/consumption row, with model + tokens + cost for consumption).
+  Verified via a real browser click-through.
+- **No fake payment collection.** A "Buy 2,500 credits — $20" button
+  exists and is real — but it does **not** grant credits, since no
+  payment processor is connected yet (billing/subscription self-service
+  is still open P1 backlog). Clicking it records a real, auditable
+  top-up request (`billing.topup_requested` in `audit_logs`) and tells
+  the user honestly that payment collection isn't wired yet — crediting
+  an account as if $20 had been paid when it hadn't would be
+  fabricating a financial transaction, a different class of problem
+  than a labelled DEMO/MOCK connector.
+
+Every tenant now gets the free-tier grant automatically: wired into both
+`POST /api/internal/auth/register` and `scripts/seed.ts`.
+
 ## 10. Pending / not yet implemented — team backlog
 
 These are known, deliberate simplifications, not accidental gaps — each

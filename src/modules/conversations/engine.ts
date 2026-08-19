@@ -2,6 +2,8 @@ import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
 import { and, eq } from "drizzle-orm";
 import { getAIProvider } from "@/modules/ai";
+import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
+import { chooseModel } from "@/modules/billing/model-router";
 import { executeToolCalls } from "@/modules/ai/actions";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
@@ -245,6 +247,31 @@ export async function handleCustomerMessage(params: {
     : [null];
   if (!agent) return { aiReplied: false, aiActive: conversation.aiActive };
 
+  // Credit gate (src/modules/billing/) — never call a real AI provider
+  // without checking the tenant can afford it first. Hands off to a human
+  // gracefully rather than leaving the customer unanswered or silently
+  // running the tenant's balance further negative.
+  const credits = await checkCredits(tenantId);
+  if (!credits.ok) {
+    await db.update(schema.conversations).set({ aiActive: false, updatedAt: new Date(), lastMessageAt: new Date() }).where(eq(schema.conversations.id, conversationId));
+    await db.insert(schema.messages).values({
+      id: generateId(),
+      tenantId,
+      conversationId,
+      sender: "AI",
+      content: "Thanks for your patience — let me get one of our team to help you with this.",
+    });
+    await db.insert(schema.tasks).values({
+      id: generateId(),
+      tenantId,
+      title: "AI credits exhausted — needs human reply",
+      type: "HUMAN_TAKEOVER",
+      dueAt: new Date(),
+    });
+    await dispatchWebhooks(tenantId, "message.sent", { conversationId, content: "AI credits exhausted; handed off to human" });
+    return { aiReplied: false, aiActive: false, creditsExhausted: true };
+  }
+
   const [contact] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, conversation.contactId)).limit(1);
 
   const products = await db.select().from(schema.products).where(and(eq(schema.products.tenantId, tenantId), eq(schema.products.status, "ACTIVE")));
@@ -260,7 +287,13 @@ export async function handleCustomerMessage(params: {
   const turns: ConversationTurn[] = history.map((m) => ({ sender: m.sender, content: m.content }));
 
   const provider = getAIProvider();
+  const modelOverride = chooseModel({
+    leadScore: conversation.leadScore,
+    latestMessage: content,
+    agent: { escalationConditions: agent.escalationConditions ?? [] },
+  });
   const reply = await provider.generateReply({
+    modelOverride,
     agent: {
       id: agent.id,
       name: agent.name,
@@ -295,6 +328,12 @@ export async function handleCustomerMessage(params: {
       leadScore: conversation.leadScore,
     },
   });
+
+  // Meter the real cost of this call — only real when a real model ran
+  // (MockAIProvider never sets usage, so this is a no-op cost of $0).
+  if (reply.usage) {
+    await chargeUsage({ tenantId, conversationId, usage: reply.usage });
+  }
 
   const [existingLead] = await db.select().from(schema.leads).where(eq(schema.leads.conversationId, conversationId)).limit(1);
   const [existingOpp] = existingLead

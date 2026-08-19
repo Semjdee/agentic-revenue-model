@@ -7,6 +7,8 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { eq } from "drizzle-orm";
 import { logAudit } from "@/lib/audit";
 import { initOnboardingProgress, advanceOnboardingStep, logOnboardingEvent } from "@/modules/onboarding/service";
+import { grantCredits } from "@/modules/billing/ledger";
+import { FREE_TIER_GRANT_CREDITS } from "@/modules/billing/pricing";
 
 const bodySchema = z.object({
   companyName: z.string().min(2),
@@ -46,6 +48,10 @@ export async function POST(req: NextRequest) {
   });
 
   await logAudit({ tenantId, userId, action: "tenant.created", entity: "tenant", entityId: tenantId, source: "APP" });
+
+  // Free-tier credit grant (src/modules/billing/) — every new tenant starts
+  // with a real, metered balance, not unlimited AI usage.
+  await grantCredits(tenantId, FREE_TIER_GRANT_CREDITS, "GRANT", "free_tier_signup");
 
   // Zero-to-live self-onboarding (docs/ONBOARDING_SPEC.md) starts here —
   // every fresh signup gets a progress row + funnel events immediately,

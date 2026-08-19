@@ -3,6 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { getAIProvider } from "@/modules/ai";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import type { ConversationTurn } from "@/modules/ai/types";
+import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
+import { chooseModel } from "@/modules/billing/model-router";
 
 // Agent test sandbox — docs/ONBOARDING_SPEC.md section 14 / addendum §A13.
 //
@@ -43,6 +45,11 @@ export async function runSandboxMessage(params: {
     .limit(1);
   if (!agent) throw new Error("Agent not found");
 
+  // Sandbox calls hit the same real provider as production (see file
+  // header) — they cost real money too, so they're metered the same way.
+  const credits = await checkCredits(params.tenantId);
+  if (!credits.ok) throw new Error("OUT_OF_CREDITS");
+
   const products = await db
     .select()
     .from(schema.products)
@@ -53,7 +60,13 @@ export async function runSandboxMessage(params: {
   const turns: ConversationTurn[] = params.history.map((m) => ({ sender: m.sender, content: m.content }));
 
   const provider = getAIProvider();
+  const modelOverride = chooseModel({
+    leadScore: 0,
+    latestMessage: params.latestMessage,
+    agent: { escalationConditions: agent.escalationConditions ?? [] },
+  });
   const reply = await provider.generateReply({
+    modelOverride,
     agent: {
       id: agent.id,
       name: agent.name,
@@ -85,6 +98,10 @@ export async function runSandboxMessage(params: {
     contactKnownFields: {},
     conversationMeta: { productsDiscussed: [], leadScore: 0 },
   });
+
+  if (reply.usage) {
+    await chargeUsage({ tenantId: params.tenantId, usage: reply.usage });
+  }
 
   return {
     message: reply.message,

@@ -7,6 +7,7 @@ import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PlayCircle, Check, X } from "lucide-react";
+import clsx from "clsx";
 
 interface Approval {
   id: string;
@@ -49,6 +50,9 @@ export default function SettingsPage() {
             <Tabs.Trigger value="activation" className={TAB_CLASS}>
               Activation
             </Tabs.Trigger>
+            <Tabs.Trigger value="credits" className={TAB_CLASS}>
+              Credits &amp; Usage
+            </Tabs.Trigger>
           </Tabs.List>
 
           <Tabs.Content value="engine" className="max-w-xl">
@@ -62,6 +66,9 @@ export default function SettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="activation" className="max-w-xl">
             <ActivationTab />
+          </Tabs.Content>
+          <Tabs.Content value="credits" className="max-w-xl">
+            <CreditsTab />
           </Tabs.Content>
         </Tabs.Root>
       </div>
@@ -246,6 +253,110 @@ function ActivationTab() {
             <span className="text-ink-muted">{m.occurredAt ? new Date(m.occurredAt).toLocaleString() : "Not yet"}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+interface CreditLedgerRow {
+  id: string;
+  type: string;
+  credits: number;
+  balanceAfter: number;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: string | null;
+  reason: string;
+  createdAt: string;
+}
+
+interface CreditsResponse {
+  balance: number;
+  plan: string;
+  recent: CreditLedgerRow[];
+  pricing: { freeTierGrant: number; paidTopupCredits: number; paidTopupPriceUsd: number };
+}
+
+// AI usage credits — src/modules/billing/. Every row here is a real
+// metered charge (or a real grant), never a placeholder number.
+function CreditsTab() {
+  const [data, setData] = useState<CreditsResponse | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [requestMsg, setRequestMsg] = useState<string | null>(null);
+
+  async function load() {
+    setData(await api.get<CreditsResponse>("/api/internal/billing/credits"));
+  }
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function requestTopup() {
+    setRequesting(true);
+    setRequestMsg(null);
+    try {
+      const res = await api.post<{ message: string }>("/api/internal/billing/request-topup");
+      setRequestMsg(res.message);
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
+
+  const low = data.balance <= data.pricing.freeTierGrant * 0.1;
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-4 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide">Balance</p>
+          <p className="text-[22px] font-semibold text-ink-primary mt-0.5">
+            {data.balance.toLocaleString()} <span className="text-[13px] font-normal text-ink-muted">credits</span>
+          </p>
+          <Badge tone={data.plan === "PAID" ? "brand" : "neutral"}>{data.plan === "PAID" ? "Paid" : "Free tier"}</Badge>
+        </div>
+        <div className="text-right">
+          <Button onClick={requestTopup} disabled={requesting}>
+            {requesting ? "Requesting…" : `Buy ${data.pricing.paidTopupCredits.toLocaleString()} credits — $${data.pricing.paidTopupPriceUsd}`}
+          </Button>
+          {requestMsg && <p className="text-[11.5px] text-ink-muted mt-1.5 max-w-[220px]">{requestMsg}</p>}
+        </div>
+      </div>
+      {low && (
+        <div className="rounded-lg border border-status-critical/30 bg-status-critical/5 px-4 py-2.5 text-[12.5px] text-status-critical">
+          Running low — once this reaches 0, your AI agent stops replying automatically and hands new conversations to a human until you top up.
+        </div>
+      )}
+      <div>
+        <p className="text-[12.5px] text-ink-secondary mb-2">Recent activity</p>
+        <div className="card overflow-hidden">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
+                <th className="px-4 py-2.5 font-medium">Type</th>
+                <th className="px-4 py-2.5 font-medium">Credits</th>
+                <th className="px-4 py-2.5 font-medium">Model</th>
+                <th className="px-4 py-2.5 font-medium">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent.map((r) => (
+                <tr key={r.id} className="border-b border-black/[0.05] dark:border-white/[0.05]">
+                  <td className="px-4 py-2.5 text-ink-primary font-medium">{r.type}</td>
+                  <td className={clsx("px-4 py-2.5 font-medium", r.credits < 0 ? "text-status-critical" : "text-status-positive")}>
+                    {r.credits > 0 ? "+" : ""}
+                    {r.credits}
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-secondary">{r.model ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-ink-muted">{new Date(r.createdAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.recent.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No activity yet.</p>}
+        </div>
       </div>
     </div>
   );

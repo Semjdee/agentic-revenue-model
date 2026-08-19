@@ -8,6 +8,14 @@ export interface ToolCall {
   parameters: Record<string, unknown>;
 }
 
+export interface AIUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export interface AIReplyResult {
   message: string;
   toolCalls: ToolCall[];
@@ -22,6 +30,12 @@ export interface AIReplyResult {
     budget?: string;
     requirements?: string;
   };
+  /** Real token usage from the provider — absent for MockAIProvider, which
+   * genuinely costs nothing (see src/modules/billing/ledger.ts, which
+   * charges 0 credits when this is undefined). Present whenever a real
+   * model actually ran, so usage can be metered against the tenant's
+   * credit balance (src/modules/billing/). */
+  usage?: AIUsage;
 }
 
 export interface AgentConfigLike {
@@ -71,6 +85,10 @@ export interface AIProviderContext {
     productsDiscussed: string[];
     leadScore: number;
   };
+  /** Which model to use for this specific call — set by
+   * src/modules/billing/model-router.ts before every real call.
+   * MockAIProvider ignores it (it's not calling a real model). */
+  modelOverride?: string;
 }
 
 export interface AIProvider {

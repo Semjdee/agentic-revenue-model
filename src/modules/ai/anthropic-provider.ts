@@ -1,4 +1,5 @@
 import type { AIProvider, AIProviderContext, AIReplyResult } from "./types";
+import { DEFAULT_MODEL } from "@/modules/billing/pricing";
 
 // ============================================================================
 // AnthropicProvider — optional real-LLM backend.
@@ -11,6 +12,15 @@ import type { AIProvider, AIProviderContext, AIReplyResult } from "./types";
 // The model is asked to return STRICT JSON matching AIReplyResult so the
 // rest of the pipeline (tool execution, approvals, audit log) is identical
 // regardless of which provider produced the reply.
+//
+// Model + usage: `ctx.modelOverride` (set by
+// src/modules/billing/model-router.ts on every real call) picks the model
+// per turn — not fixed at construction time — so Haiku/Sonnet routing
+// actually takes effect per-reply, not per-provider-instance. The real
+// `usage` block from Anthropic's response is returned on AIReplyResult.usage
+// so the caller can meter it (src/modules/billing/ledger.ts); this file
+// never touches the credit ledger itself, same separation as every other
+// provider-agnostic boundary in this codebase.
 // ============================================================================
 
 const SYSTEM_TEMPLATE = (ctx: AIProviderContext) => `You are ${ctx.agent.name}, an AI sales agent for ${
@@ -46,9 +56,10 @@ Valid tool call actions: create_contact, update_contact, create_lead, update_lea
 
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
-  constructor(private apiKey: string, private model = "claude-sonnet-4-5") {}
+  constructor(private apiKey: string, private defaultModel = DEFAULT_MODEL) {}
 
   async generateReply(ctx: AIProviderContext): Promise<AIReplyResult> {
+    const model = ctx.modelOverride || this.defaultModel;
     const messages = ctx.history.map((h) => ({
       role: h.sender === "CUSTOMER" ? ("user" as const) : ("assistant" as const),
       content: h.content,
@@ -62,9 +73,16 @@ export class AnthropicProvider implements AIProvider {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: this.model,
+        model,
         max_tokens: 1024,
-        system: SYSTEM_TEMPLATE(ctx),
+        // System prompt is identical across every turn of a conversation
+        // for a given agent (only PRODUCTS/KNOWLEDGE change, and only when
+        // the owner edits the catalog/knowledge base) — a real
+        // prompt-caching win, not a hypothetical one, since it's re-sent
+        // on every single turn otherwise. `cache_control` marks it as the
+        // cache breakpoint; Anthropic caches everything up to and
+        // including this block.
+        system: [{ type: "text", text: SYSTEM_TEMPLATE(ctx), cache_control: { type: "ephemeral" } }],
         messages: messages.length ? messages : [{ role: "user", content: ctx.latestMessage }],
       }),
     });
@@ -78,6 +96,16 @@ export class AnthropicProvider implements AIProvider {
     const match = text.match(/\{[\s\S]*\}/);
     const parsed = JSON.parse(match ? match[0] : "{}");
 
+    const usage = json.usage
+      ? {
+          model,
+          inputTokens: toFiniteNumber(json.usage.input_tokens),
+          outputTokens: toFiniteNumber(json.usage.output_tokens),
+          cacheReadTokens: toFiniteNumber(json.usage.cache_read_input_tokens),
+          cacheWriteTokens: toFiniteNumber(json.usage.cache_creation_input_tokens),
+        }
+      : undefined;
+
     return {
       message: parsed.message ?? "Sorry, could you repeat that?",
       toolCalls: parsed.toolCalls ?? [],
@@ -85,6 +113,11 @@ export class AnthropicProvider implements AIProvider {
       escalateReason: parsed.escalateReason,
       leadScoreDelta: parsed.leadScoreDelta ?? 0,
       extractedFields: parsed.extractedFields ?? {},
+      usage,
     };
   }
+}
+
+function toFiniteNumber(v: unknown): number {
+  return typeof v === "number" ? v : 0;
 }

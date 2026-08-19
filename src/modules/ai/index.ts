@@ -1,6 +1,7 @@
 import type { AIProvider } from "./types";
 import { MockAIProvider } from "./mock-provider";
 import { AnthropicProvider } from "./anthropic-provider";
+import { DEFAULT_MODEL } from "@/modules/billing/pricing";
 
 export * from "./types";
 
@@ -21,7 +22,7 @@ export function getAIProvider(): AIProvider {
   if (cached) return cached;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
-    cached = new AnthropicProvider(anthropicKey, process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5");
+    cached = new AnthropicProvider(anthropicKey, process.env.ANTHROPIC_MODEL || DEFAULT_MODEL);
   } else {
     cached = new MockAIProvider();
   }

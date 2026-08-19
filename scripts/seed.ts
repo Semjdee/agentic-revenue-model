@@ -6,12 +6,15 @@ import { db, schema } from "../src/db/client";
 import { generateId, generatePublicAgentId } from "../src/lib/ids";
 import { hashPassword } from "../src/lib/auth";
 import { indexDocument } from "../src/modules/knowledge/service";
+import { grantCredits } from "../src/modules/billing/ledger";
+import { FREE_TIER_GRANT_CREDITS } from "../src/modules/billing/pricing";
 
 async function main() {
   console.log("Seeding RayGrid Solar Energy demo tenant…");
 
   const tenantId = generateId();
   await db.insert(schema.tenants).values({ id: tenantId, name: "RayGrid Solar Energy", slug: "raygrid-solar-" + tenantId.slice(0, 6) });
+  await grantCredits(tenantId, FREE_TIER_GRANT_CREDITS, "GRANT", "free_tier_signup");
 
   const workspaceId = generateId();
   await db.insert(schema.workspaces).values({ id: workspaceId, tenantId, name: "Default Workspace" });

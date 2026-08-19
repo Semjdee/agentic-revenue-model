@@ -764,6 +764,51 @@ export const agentTestFeedback = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// 26. AI USAGE CREDITS & METERING (src/modules/billing/)
+//
+// Every AI-generated reply costs real money (Anthropic API tokens). This is
+// the ledger that meters it, enforces free/paid tier limits, and protects
+// margin — see src/modules/billing/pricing.ts for the real $/token math this
+// is built on. Deliberately NOT a payment-processor integration: this tracks
+// and enforces usage; collecting real money for a top-up needs a real Stripe
+// (or similar) integration this schema doesn't assume or fake.
+// ---------------------------------------------------------------------------
+export const CREDIT_PLANS = ["FREE", "PAID"] as const;
+
+export const creditBalances = pgTable("credit_balances", {
+  id: id(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }).unique(),
+  balance: integer("balance").notNull().default(0),
+  plan: text("plan").$type<(typeof CREDIT_PLANS)[number]>().notNull().default("FREE"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const CREDIT_TRANSACTION_TYPES = ["GRANT", "PURCHASE", "CONSUMPTION", "ADJUSTMENT"] as const;
+
+export const creditLedger = pgTable(
+  "credit_ledger",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    type: text("type").$type<(typeof CREDIT_TRANSACTION_TYPES)[number]>().notNull(),
+    // Signed: positive for GRANT/PURCHASE, negative for CONSUMPTION.
+    credits: integer("credits").notNull(),
+    balanceAfter: integer("balance_after").notNull(),
+    // Populated for CONSUMPTION rows only — the real usage that produced the charge.
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    costUsd: numeric("cost_usd"),
+    conversationId: text("conversation_id"),
+    reason: text("reason").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ tenantIdx: index("credit_ledger_tenant_idx").on(t.tenantId) })
+);
+
+// ---------------------------------------------------------------------------
 // Relations (for query ergonomics)
 // ---------------------------------------------------------------------------
 export const contactsRelations = relations(contacts, ({ many }) => ({
