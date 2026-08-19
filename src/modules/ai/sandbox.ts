@@ -1,6 +1,6 @@
 import { db, schema } from "@/db/client";
 import { and, eq } from "drizzle-orm";
-import { getAIProvider } from "@/modules/ai";
+import { runAIExecution } from "@/modules/ai";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import type { ConversationTurn } from "@/modules/ai/types";
 import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
@@ -10,10 +10,12 @@ import { chooseModel } from "@/modules/billing/model-router";
 //
 // Deliberately reuses the exact same building blocks as the real
 // conversation engine (src/modules/conversations/engine.ts):
-// getAIProvider().generateReply() and retrieveRelevantKnowledge() are the
-// identical functions, so the AI's reply here is completely real — not a
-// separate "test mode" AI, same rule as every other sandbox/demo path in
-// this codebase.
+// runAIExecution() (the AIExecutionGateway) and retrieveRelevantKnowledge()
+// are the identical functions, so the AI's reply here is completely real —
+// not a separate "test mode" AI, same rule as every other sandbox/demo path
+// in this codebase. Sandbox calls are tracked as their own AgentRun
+// (triggerType SANDBOX_TEST) and bounded by the same limits as a real
+// conversation turn.
 //
 // What's different from the real engine, deliberately: no conversation,
 // message, contact, lead, or opportunity ever gets written to the
@@ -59,44 +61,49 @@ export async function runSandboxMessage(params: {
 
   const turns: ConversationTurn[] = params.history.map((m) => ({ sender: m.sender, content: m.content }));
 
-  const provider = getAIProvider();
   const modelOverride = chooseModel({
     leadScore: 0,
     latestMessage: params.latestMessage,
     agent: { escalationConditions: agent.escalationConditions ?? [] },
   });
-  const reply = await provider.generateReply({
-    modelOverride,
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      company: agent.company,
-      instructions: agent.instructions,
-      tone: agent.tone,
-      languageRules: agent.languageRules ?? [],
-      qualificationQuestions: agent.qualificationQuestions ?? [],
-      salesRules: agent.salesRules ?? [],
-      restrictedTopics: agent.restrictedTopics ?? [],
-      escalationConditions: agent.escalationConditions ?? [],
-      greeting: agent.greeting,
+  const { reply } = await runAIExecution({
+    tenantId: params.tenantId,
+    agentId: agent.id,
+    conversationId: null,
+    triggerType: "SANDBOX_TEST",
+    context: {
+      modelOverride,
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        role: agent.role,
+        company: agent.company,
+        instructions: agent.instructions,
+        tone: agent.tone,
+        languageRules: agent.languageRules ?? [],
+        qualificationQuestions: agent.qualificationQuestions ?? [],
+        salesRules: agent.salesRules ?? [],
+        restrictedTopics: agent.restrictedTopics ?? [],
+        escalationConditions: agent.escalationConditions ?? [],
+        greeting: agent.greeting,
+      },
+      history: turns,
+      latestMessage: params.latestMessage,
+      knowledge: knowledge.map((k) => ({ documentTitle: k.documentTitle, content: k.content })),
+      products: products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        description: p.description,
+        features: p.features ?? [],
+        sellingPoints: p.sellingPoints ?? [],
+        price: p.price,
+        currency: p.currency,
+        availability: p.availability,
+      })),
+      contactKnownFields: {},
+      conversationMeta: { productsDiscussed: [], leadScore: 0 },
     },
-    history: turns,
-    latestMessage: params.latestMessage,
-    knowledge: knowledge.map((k) => ({ documentTitle: k.documentTitle, content: k.content })),
-    products: products.map((p) => ({
-      id: p.id,
-      name: p.name,
-      category: p.category,
-      description: p.description,
-      features: p.features ?? [],
-      sellingPoints: p.sellingPoints ?? [],
-      price: p.price,
-      currency: p.currency,
-      availability: p.availability,
-    })),
-    contactKnownFields: {},
-    conversationMeta: { productsDiscussed: [], leadScore: 0 },
   });
 
   if (reply.usage) {

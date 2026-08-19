@@ -1,7 +1,7 @@
 import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
-import { and, eq } from "drizzle-orm";
-import { getAIProvider } from "@/modules/ai";
+import { and, eq, desc } from "drizzle-orm";
+import { runAIExecution } from "@/modules/ai";
 import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
 import { chooseModel } from "@/modules/billing/model-router";
 import { executeToolCalls } from "@/modules/ai/actions";
@@ -222,6 +222,18 @@ export async function handleCustomerMessage(params: {
     .limit(1);
   if (!conversation) throw new Error("Conversation not found");
 
+  // Duplicate-delivery protection (spec §24): a channel webhook (WhatsApp/
+  // Instagram/Messenger) that times out and retries, or a flaky client
+  // double-submitting, must not trigger a second AI run — and a second
+  // real, distinct AI reply — for the exact same inbound message. Only
+  // collapses an EXACT content match arriving within a few seconds of the
+  // last one; a customer genuinely re-sending the same words minutes
+  // later is a new turn, not a retry.
+  const [lastMessage] = await db.select().from(schema.messages).where(eq(schema.messages.conversationId, conversationId)).orderBy(desc(schema.messages.createdAt)).limit(1);
+  if (lastMessage && lastMessage.sender === "CUSTOMER" && lastMessage.content === content && Date.now() - new Date(lastMessage.createdAt).getTime() < 5000) {
+    return { aiReplied: false, aiActive: conversation.aiActive, duplicateMessage: true };
+  }
+
   await db.insert(schema.messages).values({
     id: generateId(),
     tenantId,
@@ -286,46 +298,55 @@ export async function handleCustomerMessage(params: {
 
   const turns: ConversationTurn[] = history.map((m) => ({ sender: m.sender, content: m.content }));
 
-  const provider = getAIProvider();
   const modelOverride = chooseModel({
     leadScore: conversation.leadScore,
     latestMessage: content,
     agent: { escalationConditions: agent.escalationConditions ?? [] },
   });
-  const reply = await provider.generateReply({
-    modelOverride,
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      company: agent.company,
-      instructions: agent.instructions,
-      tone: agent.tone,
-      languageRules: agent.languageRules ?? [],
-      qualificationQuestions: agent.qualificationQuestions ?? [],
-      salesRules: agent.salesRules ?? [],
-      restrictedTopics: agent.restrictedTopics ?? [],
-      escalationConditions: agent.escalationConditions ?? [],
-      greeting: agent.greeting,
-    },
-    history: turns,
-    latestMessage: content,
-    knowledge: knowledge.map((k) => ({ documentTitle: k.documentTitle, content: k.content })),
-    products: products.map((p) => ({
-      id: p.id,
-      name: p.name,
-      category: p.category,
-      description: p.description,
-      features: p.features ?? [],
-      sellingPoints: p.sellingPoints ?? [],
-      price: p.price,
-      currency: p.currency,
-      availability: p.availability,
-    })),
-    contactKnownFields: { name: contact?.name, phone: contact?.phone, email: contact?.email },
-    conversationMeta: {
-      productsDiscussed: conversation.productsDiscussed ?? [],
-      leadScore: conversation.leadScore,
+  // Every AI provider call goes through the AIExecutionGateway
+  // (src/modules/ai/execution-gateway.ts) — never getAIProvider() directly
+  // — so it's bounded by backend-enforced tool-call/token/cost/time limits
+  // and recorded as an AgentRun regardless of outcome.
+  const { reply, run } = await runAIExecution({
+    tenantId,
+    agentId: agent.id,
+    conversationId,
+    triggerType: "INBOUND_MESSAGE",
+    context: {
+      modelOverride,
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        role: agent.role,
+        company: agent.company,
+        instructions: agent.instructions,
+        tone: agent.tone,
+        languageRules: agent.languageRules ?? [],
+        qualificationQuestions: agent.qualificationQuestions ?? [],
+        salesRules: agent.salesRules ?? [],
+        restrictedTopics: agent.restrictedTopics ?? [],
+        escalationConditions: agent.escalationConditions ?? [],
+        greeting: agent.greeting,
+      },
+      history: turns,
+      latestMessage: content,
+      knowledge: knowledge.map((k) => ({ documentTitle: k.documentTitle, content: k.content })),
+      products: products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        description: p.description,
+        features: p.features ?? [],
+        sellingPoints: p.sellingPoints ?? [],
+        price: p.price,
+        currency: p.currency,
+        availability: p.availability,
+      })),
+      contactKnownFields: { name: contact?.name, phone: contact?.phone, email: contact?.email },
+      conversationMeta: {
+        productsDiscussed: conversation.productsDiscussed ?? [],
+        leadScore: conversation.leadScore,
+      },
     },
   });
 
@@ -354,6 +375,7 @@ export async function handleCustomerMessage(params: {
       channel: conversation.channel,
       utmSource: conversation.utmSource,
       utmCampaign: conversation.utmCampaign,
+      runId: run.id,
     },
     reply.toolCalls
   );

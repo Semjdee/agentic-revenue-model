@@ -1,9 +1,21 @@
 import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { logAudit } from "@/lib/audit";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import type { ToolCall } from "./types";
+import { actionSignature } from "./execution-gateway";
+
+// Cross-run idempotency window (multi-agent-routing spec Part B §19-20):
+// how long a successfully-EXECUTED action "remembers" itself for this
+// conversation. A customer message that somehow triggers the same
+// create_lead/schedule_followup/record_sale twice in quick succession
+// (double webhook delivery, a retried request, a future multi-agent
+// handoff re-processing the same turn) produces one write, not two.
+// Long enough to catch a real duplicate, short enough that a customer
+// genuinely re-requesting the same thing an hour later isn't silently
+// dropped.
+const IDEMPOTENCY_WINDOW_MS = 10 * 60 * 1000;
 
 // ============================================================================
 // AI Tool / Action System (spec section 6 & 7).
@@ -50,6 +62,12 @@ export interface ExecutionState {
   channel?: string;
   utmSource?: string | null;
   utmCampaign?: string | null;
+  /** The AgentRun (src/modules/ai/execution-gateway.ts) that produced
+   * these tool calls — recorded on every agent_actions row for
+   * cost/loop observability. Null for callers that predate the gateway
+   * wiring (should not happen in practice, but never block execution on
+   * it being present). */
+  runId?: string | null;
 }
 
 export interface ExecutionResult extends ExecutionState {
@@ -108,6 +126,7 @@ export async function executeToolCalls(
   for (const call of toolCalls) {
     const mode = ACTION_PERMISSIONS[call.action] ?? "APPROVAL_REQUIRED";
     const actionRowId = generateId();
+    const signature = actionSignature(call);
 
     if (mode === "DISABLED") {
       await db.insert(schema.agentActions).values({
@@ -120,9 +139,50 @@ export async function executeToolCalls(
         result: {},
         status: "REJECTED",
         approvalRequired: false,
+        signature,
+        runId: state.runId ?? null,
       });
       executed.push({ action: call.action, status: "REJECTED" });
       continue;
+    }
+
+    // Cross-run idempotency (spec §19-20): this exact action already ran
+    // successfully for this conversation very recently — do not repeat a
+    // consequential write (create_lead, schedule_followup, record_sale,
+    // etc.) just because the model asked for it again. Only guards
+    // AUTOMATIC actions; a duplicate APPROVAL_REQUIRED request is safe to
+    // log again since a human still gates it either way.
+    if (mode === "AUTOMATIC") {
+      const [dup] = await db
+        .select({ id: schema.agentActions.id })
+        .from(schema.agentActions)
+        .where(
+          and(
+            eq(schema.agentActions.tenantId, state.tenantId),
+            eq(schema.agentActions.conversationId, state.conversationId),
+            eq(schema.agentActions.signature, signature),
+            eq(schema.agentActions.status, "EXECUTED"),
+            gt(schema.agentActions.createdAt, new Date(Date.now() - IDEMPOTENCY_WINDOW_MS))
+          )
+        )
+        .limit(1);
+      if (dup) {
+        await db.insert(schema.agentActions).values({
+          id: actionRowId,
+          tenantId: state.tenantId,
+          agentId: state.agentId,
+          conversationId: state.conversationId,
+          action: call.action,
+          parameters: call.parameters,
+          result: { duplicateOf: dup.id },
+          status: "SKIPPED_DUPLICATE",
+          approvalRequired: false,
+          signature,
+          runId: state.runId ?? null,
+        });
+        executed.push({ action: call.action, status: "SKIPPED_DUPLICATE" });
+        continue;
+      }
     }
 
     if (mode === "APPROVAL_REQUIRED") {
@@ -136,6 +196,8 @@ export async function executeToolCalls(
         result: {},
         status: "PENDING",
         approvalRequired: true,
+        signature,
+        runId: state.runId ?? null,
       });
       await db.insert(schema.approvals).values({
         id: generateId(),
@@ -362,6 +424,8 @@ export async function executeToolCalls(
         result,
         status: "EXECUTED",
         approvalRequired: false,
+        signature,
+        runId: state.runId ?? null,
       });
       executed.push({ action: call.action, status: "EXECUTED" });
     } catch (err) {
@@ -375,6 +439,8 @@ export async function executeToolCalls(
         result: { error: String(err) },
         status: "FAILED",
         approvalRequired: false,
+        signature,
+        runId: state.runId ?? null,
       });
       executed.push({ action: call.action, status: "FAILED" });
     }

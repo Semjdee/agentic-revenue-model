@@ -53,6 +53,9 @@ export default function SettingsPage() {
             <Tabs.Trigger value="credits" className={TAB_CLASS}>
               Credits &amp; Usage
             </Tabs.Trigger>
+            <Tabs.Trigger value="ai-runs" className={TAB_CLASS}>
+              AI Runs
+            </Tabs.Trigger>
           </Tabs.List>
 
           <Tabs.Content value="engine" className="max-w-xl">
@@ -69,6 +72,9 @@ export default function SettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="credits" className="max-w-xl">
             <CreditsTab />
+          </Tabs.Content>
+          <Tabs.Content value="ai-runs">
+            <AIRunsTab />
           </Tabs.Content>
         </Tabs.Root>
       </div>
@@ -358,6 +364,119 @@ function CreditsTab() {
           {data.recent.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No activity yet.</p>}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface AgentRunRow {
+  id: string;
+  triggerType: string;
+  status: string;
+  modelCalls: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: string;
+  stopReason: string | null;
+  startedAt: string;
+}
+interface AIRunsResponse {
+  recent: AgentRunRow[];
+  stats: {
+    totalRuns: number;
+    completed: number;
+    stoppedLimit: number;
+    stoppedLoop: number;
+    timedOut: number;
+    failed: number;
+    totalCostUsd: string;
+    avgToolCalls: string;
+  };
+}
+
+const RUN_STATUS_TONE: Record<string, "good" | "warning" | "critical" | "neutral" | "brand"> = {
+  COMPLETED: "good",
+  RUNNING: "brand",
+  STOPPED_LIMIT: "warning",
+  STOPPED_LOOP: "warning",
+  TIMED_OUT: "critical",
+  FAILED: "critical",
+  CANCELLED: "neutral",
+};
+
+// AIExecutionGateway observability (multi-agent-routing spec Part B
+// §39-40) — every AgentRun src/modules/ai/execution-gateway.ts produces,
+// so a business owner can see at a glance whether their AI is behaving:
+// what it's costing, and whether any runs got cut off for looping or
+// hitting a limit rather than genuinely completing.
+function AIRunsTab() {
+  const [data, setData] = useState<AIRunsResponse | null>(null);
+
+  useEffect(() => {
+    api.get<AIRunsResponse>("/api/internal/ai/runs").then(setData);
+  }, []);
+
+  if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
+  const { stats } = data;
+  const guardedRuns = stats.stoppedLimit + stats.stoppedLoop + stats.timedOut;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatChip label="Total runs" value={stats.totalRuns.toLocaleString()} />
+        <StatChip label="Est. AI spend" value={`$${Number(stats.totalCostUsd).toFixed(4)}`} />
+        <StatChip label="Avg tool calls / run" value={Number(stats.avgToolCalls).toFixed(1)} />
+        <StatChip label="Guarded (limit/loop/timeout)" value={guardedRuns.toLocaleString()} tone={guardedRuns > 0 ? "warning" : undefined} />
+      </div>
+      <p className="text-[11.5px] text-ink-muted">
+        Every AI reply is bounded by the AIExecutionGateway — hard, backend-enforced caps on tool calls, tokens, cost, and time per run, so a
+        misbehaving conversation can&apos;t run up unbounded cost. &quot;Guarded&quot; runs are ones those caps actually stepped in on.
+      </p>
+      <div>
+        <p className="text-[12.5px] text-ink-secondary mb-2">Recent runs</p>
+        <div className="card overflow-hidden overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
+                <th className="px-4 py-2.5 font-medium">Trigger</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Tool calls</th>
+                <th className="px-4 py-2.5 font-medium">Tokens</th>
+                <th className="px-4 py-2.5 font-medium">Cost</th>
+                <th className="px-4 py-2.5 font-medium">Stop reason</th>
+                <th className="px-4 py-2.5 font-medium">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent.map((r) => (
+                <tr key={r.id} className="border-b border-black/[0.05] dark:border-white/[0.05]">
+                  <td className="px-4 py-2.5 text-ink-secondary">{r.triggerType}</td>
+                  <td className="px-4 py-2.5">
+                    <Badge tone={RUN_STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">{r.toolCalls}</td>
+                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">{(r.inputTokens + r.outputTokens).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">${Number(r.estimatedCostUsd).toFixed(4)}</td>
+                  <td className="px-4 py-2.5 text-ink-muted truncate max-w-[220px]" title={r.stopReason ?? undefined}>
+                    {r.stopReason ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-muted">{new Date(r.startedAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.recent.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No AI runs yet.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatChip({ label, value, tone }: { label: string; value: string; tone?: "warning" }) {
+  return (
+    <div className={clsx("card p-3", tone === "warning" && "border-status-warning/40")}>
+      <p className="text-[10.5px] text-ink-muted uppercase tracking-wide">{label}</p>
+      <p className={clsx("text-[18px] font-semibold mt-0.5 tabular-nums", tone === "warning" ? "text-[#8a5a00]" : "text-ink-primary")}>{value}</p>
     </div>
   );
 }

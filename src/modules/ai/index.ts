@@ -4,6 +4,7 @@ import { AnthropicProvider } from "./anthropic-provider";
 import { DEFAULT_MODEL } from "@/modules/billing/pricing";
 
 export * from "./types";
+export * from "./execution-gateway";
 
 let cached: AIProvider | null = null;
 

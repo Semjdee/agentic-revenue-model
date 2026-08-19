@@ -196,12 +196,87 @@ export const agentActions = pgTable(
     action: text("action").notNull(), // e.g. create_lead, schedule_followup
     parameters: jsonb("parameters").$type<Record<string, unknown>>().default({}),
     result: jsonb("result").$type<Record<string, unknown>>().default({}),
-    status: text("status").notNull().default("PENDING"), // PENDING|EXECUTED|REJECTED|FAILED
+    status: text("status").notNull().default("PENDING"), // PENDING|EXECUTED|REJECTED|FAILED|SKIPPED_DUPLICATE
     approvalRequired: boolean("approval_required").notNull().default(false),
     approver: text("approver"),
+    // Deterministic action+params fingerprint (see actionSignature() in
+    // src/modules/ai/actions.ts) — lets executeToolCalls() recognize "this
+    // exact action already ran for this conversation" and skip it instead
+    // of duplicating a lead/task/message (AIExecutionGateway spec Part B
+    // §19-20: tool call deduplication + idempotency). Nullable so existing
+    // rows from before this column existed just never match anything.
+    signature: text("signature"),
+    // Which AgentRun (below) produced this action attempt — nullable for
+    // the same reason.
+    runId: text("run_id"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => ({ tenantIdx: index("agent_actions_tenant_idx").on(t.tenantId) })
+  (t) => ({
+    tenantIdx: index("agent_actions_tenant_idx").on(t.tenantId),
+    signatureIdx: index("agent_actions_signature_idx").on(t.conversationId, t.signature),
+  })
+);
+
+// ---------------------------------------------------------------------------
+// AI EXECUTION GOVERNANCE — every AI provider call is required to go
+// through src/modules/ai/execution-gateway.ts (the "AIExecutionGateway"),
+// which wraps it in one of these rows. This is what makes a runaway
+// "Agent -> Tool -> Agent -> Tool -> ..." loop impossible to run
+// unbounded: every call has backend-enforced (not model-controlled) caps
+// on tool calls, tokens, cost, and wall-clock time, and the outcome is
+// always recorded here for cost/loop/timeout observability — independent
+// of whether the reply that came back was ever actually used.
+// ---------------------------------------------------------------------------
+export const AGENT_RUN_STATUSES = [
+  "RUNNING",
+  "COMPLETED",
+  "STOPPED_LIMIT",
+  "STOPPED_LOOP",
+  "FAILED",
+  "TIMED_OUT",
+  "CANCELLED",
+] as const;
+
+// What kind of trigger started this run. INBOUND_MESSAGE covers every real
+// channel (website/WhatsApp/Instagram/Messenger all funnel through
+// handleCustomerMessage — see src/modules/conversations/engine.ts).
+export const AGENT_RUN_TRIGGERS = ["INBOUND_MESSAGE", "SANDBOX_TEST", "FOLLOWUP"] as const;
+
+export const agentRuns = pgTable(
+  "agent_runs",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    conversationId: text("conversation_id"),
+    triggerType: text("trigger_type").$type<(typeof AGENT_RUN_TRIGGERS)[number]>().notNull(),
+    status: text("status").$type<(typeof AGENT_RUN_STATUSES)[number]>().notNull().default("RUNNING"),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    completedAt: ts("completed_at"),
+    // This platform makes exactly one model call per run today (no
+    // internal agent-loop exists yet — see execution-gateway.ts's header
+    // comment), so modelCalls is 1 or 2 (one bounded retry on a transient
+    // provider error). Tracked as a count, not a boolean, so the column
+    // means the same thing once multi-step runs exist.
+    modelCalls: integer("model_calls").notNull().default(0),
+    toolCalls: integer("tool_calls").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    estimatedCostUsd: numeric("estimated_cost_usd").notNull().default("0"),
+    maxModelCalls: integer("max_model_calls").notNull(),
+    maxToolCalls: integer("max_tool_calls").notNull(),
+    maxTokens: integer("max_tokens").notNull(),
+    maxCostUsd: numeric("max_cost_usd").notNull(),
+    timeoutAt: ts("timeout_at").notNull(),
+    stopReason: text("stop_reason"),
+    parentRunId: text("parent_run_id"),
+    correlationId: text("correlation_id"),
+  },
+  (t) => ({
+    tenantIdx: index("agent_runs_tenant_idx").on(t.tenantId),
+    conversationIdx: index("agent_runs_conversation_idx").on(t.conversationId),
+  })
 );
 
 // ---------------------------------------------------------------------------
