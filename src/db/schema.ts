@@ -695,6 +695,25 @@ export const adMetricSnapshots = pgTable("ad_metric_snapshots", {
   revenue: numeric("revenue").notNull().default("0"),
 });
 
+// Organic Google Search (Search Console) — deliberately NOT modeled as an
+// ad_account/campaign: there's no spend, no campaign, no ROAS, just
+// impressions/clicks/ranking for the property as a whole. A parallel,
+// smaller shape rather than forcing it through the paid-ads tables.
+export const searchConsoleSnapshots = pgTable(
+  "search_console_snapshots",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    integrationId: text("integration_id").notNull().references(() => integrations.id, { onDelete: "cascade" }),
+    date: text("date").notNull(), // YYYY-MM-DD
+    impressions: integer("impressions").notNull().default(0),
+    clicks: integer("clicks").notNull().default(0),
+    avgPosition: numeric("avg_position"),
+    topQueries: jsonb("top_queries").$type<{ query: string; clicks: number; impressions: number }[]>().default([]),
+  },
+  (t) => ({ tenantIdx: index("search_console_snapshots_tenant_idx").on(t.tenantId) })
+);
+
 export const RECOMMENDATION_STATUSES = ["NEW", "APPROVED", "REJECTED", "IMPLEMENTED", "EXPIRED"] as const;
 
 export const advertisingRecommendations = pgTable("advertising_recommendations", {
@@ -735,8 +754,8 @@ export const approvals = pgTable("approvals", {
 export const integrations = pgTable("integrations", {
   id: id(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  provider: text("provider").notNull(), // whatsapp, instagram, messenger, hubspot, kommo, salesforce, zoho, odoo, google_ads, meta_ads, shopify, woocommerce, google_calendar, gmail, slack
-  category: text("category").notNull(), // MESSAGING|CRM|ADVERTISING|ECOMMERCE|PRODUCTIVITY|OTHER
+  provider: text("provider").notNull(), // whatsapp, instagram, messenger, hubspot, kommo, salesforce, zoho, odoo, instagram_ads, facebook_ads, google_ads, tiktok_ads, google_search_console, shopify, woocommerce, google_calendar, gmail, slack
+  category: text("category").notNull(), // MESSAGING|CRM|ADVERTISING|ANALYTICS|ECOMMERCE|PRODUCTIVITY|OTHER
   // PENDING/REAUTH_REQUIRED added for docs/ONBOARDING_SPEC.md section 6/13
   // — real OAuth-style connectors (WhatsApp) pass through PENDING while
   // exchanging/registering/testing, and only ever reach CONNECTED if every

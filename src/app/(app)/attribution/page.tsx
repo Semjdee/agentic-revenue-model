@@ -3,11 +3,20 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api-client";
+import { Badge } from "@/components/ui/badge";
 
 interface AttributionData {
   revenueBySource: { source: string; revenue: number }[];
   revenueByCampaign: { campaign: string; revenue: number }[];
   touches: { id: string; touchType: string; source: string | null; campaign: string | null; createdAt: string }[];
+}
+interface OrganicSearchData {
+  connected: boolean;
+  propertyName?: string;
+  totalImpressions?: number;
+  totalClicks?: number;
+  avgPosition?: number;
+  topQueries?: { query: string; clicks: number; impressions: number }[];
 }
 
 function fmtUGX(n: number) {
@@ -16,9 +25,11 @@ function fmtUGX(n: number) {
 
 export default function AttributionPage() {
   const [data, setData] = useState<AttributionData | null>(null);
+  const [organic, setOrganic] = useState<OrganicSearchData | null>(null);
 
   useEffect(() => {
     api.get<AttributionData>("/api/internal/attribution").then(setData);
+    api.get<OrganicSearchData>("/api/internal/analytics/organic-search").then(setOrganic);
   }, []);
 
   return (
@@ -80,8 +91,51 @@ export default function AttributionPage() {
               </tbody>
             </table>
           </div>
+
+          <div className="card p-4 md:col-span-2">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[13px] font-semibold text-ink-primary">Organic Google Search (last 30 days)</p>
+              {organic?.connected && <Badge tone="good">{organic.propertyName}</Badge>}
+            </div>
+            {!organic?.connected ? (
+              <p className="text-[12.5px] text-ink-muted">
+                Not connected — <a href="/integrations" className="text-brand-600 hover:underline">connect Google Search (Organic)</a> on Integrations to see impressions, clicks, and top
+                queries here. No ad spend involved — this is free organic traffic.
+              </p>
+            ) : (
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-3 gap-2 sm:col-span-1 sm:grid-cols-1">
+                  <Stat label="Impressions" value={organic.totalImpressions?.toLocaleString() ?? "0"} />
+                  <Stat label="Clicks" value={organic.totalClicks?.toLocaleString() ?? "0"} />
+                  <Stat label="Avg. position" value={organic.avgPosition?.toFixed(1) ?? "—"} />
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-[11px] text-ink-muted uppercase tracking-wide mb-1.5">Top queries</p>
+                  <div className="space-y-1">
+                    {(organic.topQueries ?? []).map((q) => (
+                      <div key={q.query} className="flex items-center justify-between text-[12.5px]">
+                        <span className="text-ink-secondary truncate">{q.query}</span>
+                        <span className="text-ink-muted tabular-nums shrink-0 ml-2">
+                          {q.clicks} clicks · {q.impressions} impr.
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10.5px] text-ink-muted uppercase tracking-wide">{label}</p>
+      <p className="text-[16px] font-semibold text-ink-primary tabular-nums">{value}</p>
     </div>
   );
 }

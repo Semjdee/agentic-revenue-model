@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MessageCircle, Building2, Megaphone, ShoppingBag, Calendar, Webhook } from "lucide-react";
+import { MessageCircle, Building2, Megaphone, TrendingUp, ShoppingBag, Calendar, Webhook } from "lucide-react";
 
 interface IntegrationCard {
   provider: string;
@@ -20,12 +20,13 @@ const CATEGORY_ICON: Record<string, React.ElementType> = {
   MESSAGING: MessageCircle,
   CRM: Building2,
   ADVERTISING: Megaphone,
+  ANALYTICS: TrendingUp,
   ECOMMERCE: ShoppingBag,
   PRODUCTIVITY: Calendar,
   OTHER: Webhook,
 };
 
-const CATEGORY_ORDER = ["MESSAGING", "CRM", "ADVERTISING", "ECOMMERCE", "PRODUCTIVITY", "OTHER"];
+const CATEGORY_ORDER = ["MESSAGING", "CRM", "ADVERTISING", "ANALYTICS", "ECOMMERCE", "PRODUCTIVITY", "OTHER"];
 
 export default function IntegrationsPage() {
   const [cards, setCards] = useState<IntegrationCard[]>([]);
@@ -49,6 +50,8 @@ export default function IntegrationsPage() {
   // one is built, not all at once.
   const OAUTH_PROVIDERS = new Set(["whatsapp", "instagram"]);
   const CRM_PROVIDERS = new Set(["hubspot", "kommo", "salesforce", "zoho", "odoo", "custom_crm"]);
+  const ADS_PROVIDERS = new Set(["instagram_ads", "facebook_ads", "google_ads", "tiktok_ads"]);
+  const ANALYTICS_PROVIDERS = new Set(["google_search_console"]);
 
   async function toggle(card: IntegrationCard) {
     if (card.status === "CONNECTED") {
@@ -63,6 +66,16 @@ export default function IntegrationsPage() {
     }
     if (CRM_PROVIDERS.has(card.provider)) {
       const { authorizationUrl } = await api.post<{ authorizationUrl: string }>(`/api/internal/integrations/crm/${card.provider}/connect`, { returnTo: "/integrations" });
+      window.location.href = authorizationUrl;
+      return;
+    }
+    if (ADS_PROVIDERS.has(card.provider)) {
+      const { authorizationUrl } = await api.post<{ authorizationUrl: string }>(`/api/internal/integrations/ads/${card.provider}/connect`, { returnTo: "/integrations" });
+      window.location.href = authorizationUrl;
+      return;
+    }
+    if (ANALYTICS_PROVIDERS.has(card.provider)) {
+      const { authorizationUrl } = await api.post<{ authorizationUrl: string }>(`/api/internal/integrations/analytics/${card.provider}/connect`, { returnTo: "/integrations" });
       window.location.href = authorizationUrl;
       return;
     }

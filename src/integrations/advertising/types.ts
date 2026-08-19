@@ -19,9 +19,13 @@ export interface NormalizedMetric {
 }
 
 export interface AdsConnector {
-  readonly provider: "GOOGLE" | "META";
+  readonly provider: "GOOGLE" | "META" | "TIKTOK";
   readonly isMock: boolean;
   authenticate(credentials: Record<string, unknown>): Promise<{ ok: boolean }>;
+  /** Real check against the provider — must fail honestly if the
+   * connection isn't actually usable, never a hardcoded success (same
+   * discipline as OAuthConnector/CRMConnector's testConnection). */
+  testConnection(): Promise<{ ok: boolean; detail?: string }>;
   listCampaigns(): Promise<NormalizedCampaign[]>;
   getMetrics(campaignExternalId: string, days: number): Promise<NormalizedMetric[]>;
   updateBudget(campaignExternalId: string, newDailyBudget: number): Promise<{ ok: boolean }>;
