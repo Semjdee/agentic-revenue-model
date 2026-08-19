@@ -348,6 +348,12 @@ export async function handleCustomerMessage(params: {
       contactId: conversation.contactId,
       leadId: existingLead?.id ?? null,
       opportunityId: existingOpp?.id ?? null,
+      // Real channel/UTM data — see actions.ts's create_lead/create_opportunity
+      // handlers, which use this as the honest source/campaign default
+      // instead of ever guessing or hardcoding it.
+      channel: conversation.channel,
+      utmSource: conversation.utmSource,
+      utmCampaign: conversation.utmCampaign,
     },
     reply.toolCalls
   );

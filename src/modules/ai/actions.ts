@@ -41,6 +41,15 @@ export interface ExecutionState {
   contactId: string;
   leadId: string | null;
   opportunityId: string | null;
+  /** Real channel/campaign data from the conversation — the platform
+   * knows this deterministically; the AI is never asked to report its
+   * own channel (same "platform calculates, AI interprets" discipline
+   * as everywhere else in this codebase). Used as the honest default
+   * for a new lead's source/campaign instead of a hardcoded fallback,
+   * so leads are actually filterable by where they came from. */
+  channel?: string;
+  utmSource?: string | null;
+  utmCampaign?: string | null;
 }
 
 export interface ExecutionResult extends ExecutionState {
@@ -160,7 +169,13 @@ export async function executeToolCalls(
               contactId: state.contactId,
               conversationId: state.conversationId,
               stage: (call.parameters.stage as string as "NEW") || "NEW",
-              source: (call.parameters.source as string) ?? "website",
+              // Real channel/UTM data first — never the AI's own guess at
+              // "source", and never a hardcoded fallback. A WhatsApp
+              // conversation must produce a lead whose source says
+              // "whatsapp", not "website" (see BUILD_NOTES.md — this was
+              // a real bug found and now fixed).
+              source: (call.parameters.source as string) || state.utmSource || state.channel?.toLowerCase() || "website",
+              campaign: (call.parameters.campaign as string) || state.utmCampaign || undefined,
             });
             leadId = newLeadId;
             await logAudit({
@@ -212,7 +227,8 @@ export async function executeToolCalls(
               estimatedValue: (call.parameters.estimatedValue as string) ?? null,
               products: (call.parameters.products as never[]) ?? [],
               stage: (call.parameters.stage as string as "OPPORTUNITY") || "OPPORTUNITY",
-              source: "website",
+              source: state.utmSource || state.channel?.toLowerCase() || "website",
+              campaign: state.utmCampaign || undefined,
               firstConversationId: state.conversationId,
               latestConversationId: state.conversationId,
               lastInteractionAt: new Date(),

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { LEAD_STAGES } from "@/db/schema";
+import clsx from "clsx";
 
 interface Lead {
   id: string;
@@ -15,8 +16,28 @@ interface Lead {
   stage: (typeof LEAD_STAGES)[number];
   score: number;
   source: string | null;
+  campaign: string | null;
   productsDiscussed: string[];
   createdAt: string;
+}
+
+// Human-readable labels + a small icon-ish dot color per known source —
+// falls back to the raw value for anything not in this map (a new
+// channel/UTM source shows up automatically, never hidden), so this list
+// is a display nicety, not the source of truth for what's filterable.
+const SOURCE_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  messenger: "Messenger",
+  website: "Website",
+  google: "Google",
+  meta: "Meta / Facebook",
+  tiktok: "TikTok",
+  direct: "Direct",
+};
+
+function sourceLabel(source: string) {
+  return SOURCE_LABELS[source.toLowerCase()] ?? source;
 }
 interface Opportunity {
   id: string;
@@ -36,6 +57,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contactNames, setContactNames] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Lead | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
 
   async function load() {
     const rows = await api.get<Lead[]>("/api/internal/leads");
@@ -50,13 +72,49 @@ export default function LeadsPage() {
     load();
   }, []);
 
+  // Distinct sources actually present in this tenant's data — not a
+  // hardcoded list, so a new channel (e.g. TikTok, once that connector
+  // lands) shows up here automatically the first time a lead comes
+  // through it.
+  const availableSources = Array.from(new Set(leads.map((l) => l.source).filter((s): s is string => Boolean(s)))).sort();
+  const visibleLeads = sourceFilter ? leads.filter((l) => l.source === sourceFilter) : leads;
+
   return (
     <div className="pb-12">
       <PageHeader title="Leads" description="Every lead your AI Sales Agent has qualified, across every stage." />
+      {availableSources.length > 0 && (
+        <div className="px-5 md:px-8 -mt-2 mb-4 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11.5px] text-ink-muted mr-1">Source:</span>
+          <button
+            onClick={() => setSourceFilter(null)}
+            className={clsx(
+              "px-2.5 py-1 rounded-full text-[12px] font-medium border",
+              sourceFilter === null ? "bg-brand-500 text-white border-brand-500" : "bg-transparent text-ink-secondary border-black/10 dark:border-white/15 hover:border-brand-300"
+            )}
+          >
+            All ({leads.length})
+          </button>
+          {availableSources.map((s) => {
+            const count = leads.filter((l) => l.source === s).length;
+            return (
+              <button
+                key={s}
+                onClick={() => setSourceFilter(s)}
+                className={clsx(
+                  "px-2.5 py-1 rounded-full text-[12px] font-medium border",
+                  sourceFilter === s ? "bg-brand-500 text-white border-brand-500" : "bg-transparent text-ink-secondary border-black/10 dark:border-white/15 hover:border-brand-300"
+                )}
+              >
+                {sourceLabel(s)} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="px-5 md:px-8 overflow-x-auto">
         <div className="flex gap-3 min-w-[900px]">
           {STAGES.map((stage) => {
-            const stageLeads = leads.filter((l) => l.stage === stage);
+            const stageLeads = visibleLeads.filter((l) => l.stage === stage);
             return (
               <div key={stage} className="flex-1 min-w-[150px]">
                 <div className="flex items-center justify-between mb-2 px-1">
@@ -67,9 +125,14 @@ export default function LeadsPage() {
                   {stageLeads.map((lead) => (
                     <button key={lead.id} onClick={() => setSelected(lead)} className="w-full text-left card p-3 hover:border-brand-300">
                       <p className="text-[12.5px] font-medium text-ink-primary truncate">{contactNames[lead.contactId] || "Contact"}</p>
-                      <p className="text-[11px] text-ink-muted mt-0.5 truncate">{lead.productsDiscussed?.[0] || lead.source || "—"}</p>
-                      <div className="flex items-center justify-between mt-2">
+                      <p className="text-[11px] text-ink-muted mt-0.5 truncate">{lead.productsDiscussed?.[0] || "—"}</p>
+                      <div className="flex items-center justify-between mt-2 gap-1.5">
                         <Badge tone={stageTone(lead.stage)}>{lead.score} pts</Badge>
+                        {lead.source && (
+                          <span className="text-[10px] text-ink-muted truncate" title={lead.campaign ?? undefined}>
+                            {sourceLabel(lead.source)}
+                          </span>
+                        )}
                       </div>
                     </button>
                   ))}
@@ -115,7 +178,12 @@ function LeadDialog({ lead, contactName, onClose, onChanged }: { lead: Lead; con
   }
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title={contactName || "Lead"} description={`Stage: ${lead.stage} · Score: ${lead.score}`}>
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={contactName || "Lead"}
+      description={`Stage: ${lead.stage} · Score: ${lead.score}${lead.source ? ` · via ${sourceLabel(lead.source)}` : ""}${lead.campaign ? ` (${lead.campaign})` : ""}`}
+    >
       <div className="space-y-4">
         <div className="flex flex-wrap gap-1.5">
           {STAGES.filter((s) => s !== "WON" && s !== "LOST").map((s) => (
