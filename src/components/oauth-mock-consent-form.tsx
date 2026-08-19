@@ -65,7 +65,9 @@ export function OAuthMockConsentForm({
             {brandLetter}
           </div>
           <div>
-            <p className="text-[13px] font-semibold text-ink-primary">Connect a {providerLabel} account</p>
+            <p className="text-[13px] font-semibold text-ink-primary">
+              Connect {/^[aeiou]/i.test(providerLabel) ? "an" : "a"} {providerLabel} account
+            </p>
             <p className="text-[11px] text-ink-muted">Demo authorization — no real {providerLabel} account needed</p>
           </div>
         </div>
