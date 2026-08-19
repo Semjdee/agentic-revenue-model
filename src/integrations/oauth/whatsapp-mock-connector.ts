@@ -100,12 +100,3 @@ export class MockWhatsAppConnector implements OAuthConnector {
     return { ok: true };
   }
 }
-
-export function getOAuthConnector(provider: string): OAuthConnector {
-  switch (provider) {
-    case "whatsapp":
-      return new MockWhatsAppConnector();
-    default:
-      throw new Error(`No OAuth connector registered for provider: ${provider}`);
-  }
-}

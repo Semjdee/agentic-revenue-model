@@ -326,10 +326,34 @@ anticipated.
 - [ ] Google/Passkey auth for account creation (spec section 4 Step 1) —
       email/password already works; OAuth providers are additive.
 - [ ] Industry starter templates (spec sections 12, addendum §A11).
-- [ ] Instagram self-connect, CRM connector onboarding, Google Ads
-      self-connect + attribution, billing/subscription self-service —
-      all P1 per spec section 37, after every P0 milestone above is
-      solid.
+- [x] **Instagram self-connect — done (2026-08-19).** Same real staged
+      OAuth pipeline as WhatsApp (state/CSRF validation, webhook
+      registration + testConnection gating), sharing code instead of
+      duplicating it: extracted `src/integrations/oauth/connect-flow.ts`
+      (the connect/callback logic, now used by both providers) and
+      `registry.ts` (the `getOAuthConnector()` factory, moved out of
+      `whatsapp-mock-connector.ts` where it originally lived) plus a
+      shared `src/components/oauth-mock-consent-form.tsx` for the two
+      near-identical mock consent screens. `MockInstagramConnector`
+      (`src/integrations/oauth/instagram-mock-connector.ts`) and the
+      inbound adapter (`src/app/api/public/webhooks/instagram/route.ts`,
+      shaped like Meta's real `entry[].messaging[]` payload) reuse
+      `startChannelConversation()` exactly like WhatsApp does. Added a
+      `returnTo` param so connecting from `/integrations` (not just the
+      onboarding wizard) returns to the right page — guarded against
+      open-redirect (`safeInternalPath()` in `connect-flow.ts`) since it's
+      caller-influenced. **Deliberately not added to the onboarding
+      wizard's CHANNEL_CONNECT step** — spec section 10 explicitly defers
+      Instagram to "later, contextually, after first value", so it's only
+      reachable from the `/integrations` page for now. Verified: state
+      mismatch genuinely rejected (400), full connect→callback happy path
+      works, WhatsApp confirmed still working after the shared-code
+      refactor (both its connect flow and inbound webhook re-tested), a
+      simulated inbound Instagram DM produced a real contact/lead/AI
+      reply via the same engine path. Regression gate clean.
+- [ ] CRM connector onboarding, Google Ads self-connect + attribution,
+      billing/subscription self-service — remaining P1 per spec section
+      37, after every P0 milestone above is solid.
 - [ ] TikTok, Advanced Attribution, Influencer Intelligence, Revenue
       Goal Agent, Additional AI Agents — P2, same as
       `docs/PHASE_2_TASKS.md`'s existing backlog for these.

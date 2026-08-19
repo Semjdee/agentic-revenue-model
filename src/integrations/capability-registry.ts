@@ -34,4 +34,10 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderCapability[]> = {
  * later, not bundled in up front. */
 export const PROVIDER_DEFAULT_SCOPES: Record<string, string[]> = {
   whatsapp: ["whatsapp_business_messaging", "whatsapp_business_management"],
+  // Instagram self-service connection (docs/ONBOARDING_SPEC.md section 8) —
+  // messaging + basic profile only to start; content publishing isn't
+  // requested until a feature that needs it actually ships (least-privilege
+  // scopes, spec section 7 — don't request more than the current feature
+  // set uses).
+  instagram: ["instagram_business_basic", "instagram_business_manage_messages"],
 };

@@ -3,14 +3,10 @@ import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
 import { initiateOAuthConnect } from "@/integrations/oauth/connect-flow";
 
-// docs/ONBOARDING_SPEC.md section 6 / docs/PHASE_2_EXTENSIONS_SPEC.md
-// section 12 — issues a CSRF-protection `state`, stashes it server-side
-// against a PENDING integration row. Shared logic lives in
-// src/integrations/oauth/connect-flow.ts (also used by Instagram).
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session) return jsonError("Not authenticated", 401);
   const body = await req.json().catch(() => ({}));
   const returnTo = typeof body?.returnTo === "string" ? body.returnTo : "/onboarding";
-  return jsonOk(await initiateOAuthConnect(session, "whatsapp", "MESSAGING", "/onboarding/whatsapp-mock-consent", returnTo));
+  return jsonOk(await initiateOAuthConnect(session, "instagram", "MESSAGING", "/onboarding/instagram-mock-consent", returnTo));
 }
