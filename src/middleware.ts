@@ -26,29 +26,56 @@ import type { NextRequest } from "next/server";
 //     change — non-breaking until the second site exists.
 export function middleware(req: NextRequest) {
   const adminHostname = process.env.ADMIN_HOSTNAME;
-  if (!adminHostname) return NextResponse.next();
-
-  const host = req.headers.get("host") || "";
-  const isAdminHost = host === adminHostname || host.startsWith(`${adminHostname}:`); // allow a trailing :port in local testing
   const isPlatformPath = req.nextUrl.pathname.startsWith("/platform") || req.nextUrl.pathname.startsWith("/api/platform");
 
+  // Diagnostic header, always set regardless of outcome below — lets us
+  // tell "middleware didn't run at all on this host" apart from
+  // "middleware ran but ADMIN_HOSTNAME didn't match what it expected"
+  // from the response alone, without needing server log access. Cheap
+  // enough to leave in permanently rather than strip out later.
+  const debugHeaders = {
+    "x-admin-gate": adminHostname ? "configured" : "unconfigured",
+    "x-admin-gate-host-seen": req.headers.get("host") || req.headers.get("x-forwarded-host") || "(none)",
+  };
+
+  if (!adminHostname) {
+    const res = NextResponse.next();
+    for (const [k, v] of Object.entries(debugHeaders)) res.headers.set(k, v);
+    return res;
+  }
+
+  // Netlify's edge network can rewrite the plain Host header; the
+  // original request host is more reliably found in x-forwarded-host
+  // when that happens — check both rather than assuming which one a
+  // given platform preserves.
+  const host = req.headers.get("host") || req.headers.get("x-forwarded-host") || "";
+  const isAdminHost = host === adminHostname || host.startsWith(`${adminHostname}:`); // allow a trailing :port in local testing
+
   if (isAdminHost) {
-    if (isPlatformPath) return NextResponse.next();
+    if (isPlatformPath) {
+      const res = NextResponse.next();
+      for (const [k, v] of Object.entries(debugHeaders)) res.headers.set(k, v);
+      return res;
+    }
     // Any other API route (tenant-internal, public widget) has no
     // business responding on the admin host — 404, not a redirect,
     // since a redirected API call just breaks confusingly instead of
     // failing cleanly.
-    if (req.nextUrl.pathname.startsWith("/api")) return new NextResponse("Not found", { status: 404 });
+    if (req.nextUrl.pathname.startsWith("/api")) return new NextResponse("Not found", { status: 404, headers: debugHeaders });
     const url = req.nextUrl.clone();
     url.pathname = "/platform/login";
-    return NextResponse.redirect(url);
+    const res = NextResponse.redirect(url);
+    for (const [k, v] of Object.entries(debugHeaders)) res.headers.set(k, v);
+    return res;
   }
 
   if (isPlatformPath) {
-    return new NextResponse("Not found", { status: 404 });
+    return new NextResponse("Not found", { status: 404, headers: debugHeaders });
   }
 
-  return NextResponse.next();
+  const res = NextResponse.next();
+  for (const [k, v] of Object.entries(debugHeaders)) res.headers.set(k, v);
+  return res;
 }
 
 // Runs on everything except Next's own static/image assets — those need
