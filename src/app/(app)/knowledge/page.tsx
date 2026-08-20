@@ -155,7 +155,7 @@ function AddKnowledgeDialog({
   defaultCollectionId: string | null;
   onCreated: (doc: Doc) => void;
 }) {
-  const [mode, setMode] = useState<"MANUAL" | "FAQ" | "URL">("MANUAL");
+  const [mode, setMode] = useState<"MANUAL" | "FAQ" | "URL" | "PDF">("MANUAL");
   const [collectionId, setCollectionId] = useState(defaultCollectionId ?? "");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -164,6 +164,9 @@ function AddKnowledgeDialog({
   const [sourceUrl, setSourceUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fetchingUrl, setFetchingUrl] = useState(false);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [pdfFileName, setPdfFileName] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -175,8 +178,47 @@ function AddKnowledgeDialog({
       setAnswer("");
       setSourceUrl("");
       setError(null);
+      setPdfFileName(null);
     }
   }, [open, defaultCollectionId, collections]);
+
+  async function fetchUrlContent() {
+    if (!sourceUrl.trim()) {
+      setError("Enter a URL first.");
+      return;
+    }
+    setFetchingUrl(true);
+    setError(null);
+    try {
+      const result = await api.post<{ title: string; content: string }>("/api/internal/knowledge/extract-url", { url: sourceUrl.trim() });
+      setTitle((prev) => prev || result.title);
+      setContent(result.content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch that page.");
+    } finally {
+      setFetchingUrl(false);
+    }
+  }
+
+  async function uploadPdf(file: File) {
+    setUploadingPdf(true);
+    setError(null);
+    setPdfFileName(file.name);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/internal/knowledge/extract-pdf", { method: "POST", body: form, credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error?.message || "Failed to read that PDF.");
+      setTitle((prev) => prev || json.data.title);
+      setContent(json.data.content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to read that PDF.");
+      setPdfFileName(null);
+    } finally {
+      setUploadingPdf(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -214,19 +256,16 @@ function AddKnowledgeDialog({
     >
       <form onSubmit={submit} className="space-y-4">
         <div className="flex gap-1 bg-black/[0.04] dark:bg-white/10 rounded-lg p-1 w-fit">
-          {(["MANUAL", "FAQ", "URL"] as const).map((m) => (
+          {(["MANUAL", "FAQ", "URL", "PDF"] as const).map((m) => (
             <button
               type="button"
               key={m}
               onClick={() => setMode(m)}
               className={`px-3 py-1.5 rounded-md text-[12.5px] font-medium ${mode === m ? "bg-surface shadow-sm text-ink-primary" : "text-ink-secondary"}`}
             >
-              {m === "MANUAL" ? "Text" : m === "FAQ" ? "FAQ" : "Website URL"}
+              {m === "MANUAL" ? "Text" : m === "FAQ" ? "FAQ" : m === "URL" ? "Website URL" : "PDF"}
             </button>
           ))}
-          <button type="button" disabled title="Coming soon" className="px-3 py-1.5 rounded-md text-[12.5px] text-ink-muted opacity-50 cursor-not-allowed">
-            PDF
-          </button>
         </div>
 
         <div>
@@ -279,22 +318,61 @@ function AddKnowledgeDialog({
         {mode === "URL" && (
           <>
             <div>
+              <Label>URL</Label>
+              <div className="flex gap-2">
+                <Input required type="url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://yourbusiness.com/shipping" className="flex-1" />
+                <Button type="button" variant="secondary" onClick={fetchUrlContent} disabled={fetchingUrl || !sourceUrl.trim()}>
+                  {fetchingUrl ? "Fetching…" : "Fetch content"}
+                </Button>
+              </div>
+              <p className="text-[11.5px] text-ink-muted mt-1">Fetches the page and extracts its text automatically — review and edit below before saving.</p>
+            </div>
+            <div>
               <Label>Page title</Label>
               <Input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Shipping information page" />
             </div>
             <div>
-              <Label>URL</Label>
-              <Input required type="url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://yourbusiness.com/shipping" />
-            </div>
-            <div>
-              <Label>Paste the page content</Label>
+              <Label>Content</Label>
               <Textarea
                 required
-                rows={5}
+                rows={7}
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="Automatic crawling isn't wired up in this MVP — paste the relevant text here for now (architecture supports adding a fetcher later)."
+                placeholder="Click &quot;Fetch content&quot; above, or paste the relevant text here yourself."
               />
+            </div>
+          </>
+        )}
+
+        {mode === "PDF" && (
+          <>
+            <div>
+              <Label>PDF file</Label>
+              <div className="flex items-center gap-2">
+                <label className="flex-1">
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) uploadPdf(file);
+                    }}
+                  />
+                  <span className="block w-full rounded-lg border border-dashed border-black/15 dark:border-white/20 px-3 py-2.5 text-[13px] text-ink-secondary text-center cursor-pointer hover:border-black/30 dark:hover:border-white/40">
+                    {uploadingPdf ? "Reading PDF…" : pdfFileName || "Click to choose a PDF file"}
+                  </span>
+                </label>
+              </div>
+              <p className="text-[11.5px] text-ink-muted mt-1">Text is extracted automatically (max 15MB, no scanned-image-only PDFs) — review and edit below before saving.</p>
+            </div>
+            <div>
+              <Label>Title</Label>
+              <Input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Product catalogue 2026" />
+            </div>
+            <div>
+              <Label>Content</Label>
+              <Textarea required rows={7} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Upload a PDF above to extract its text, or paste it here yourself." />
             </div>
           </>
         )}
