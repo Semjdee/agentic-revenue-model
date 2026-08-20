@@ -18,7 +18,8 @@ interface Opportunity {
 }
 
 export default function FollowUpsPage() {
-  const [opps, setOpps] = useState<Opportunity[]>([]);
+  const [overdue, setOverdue] = useState<Opportunity[]>([]);
+  const [upcoming, setUpcoming] = useState<Opportunity[]>([]);
   const [contactNames, setContactNames] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<string | null>(null);
@@ -35,9 +36,13 @@ export default function FollowUpsPage() {
     fetchOpportunities();
   }, []);
 
+  // Same overdue/upcoming split the Dashboard's "Needs Attention" panel
+  // counts from (src/modules/followups/service.ts) — computed server-side
+  // once, not re-derived here, so the two pages can't disagree.
   async function fetchOpportunities() {
-    const rows = await api.get<Opportunity[]>("/api/internal/opportunities");
-    setOpps(rows.filter((o) => o.nextFollowUpAt));
+    const queue = await api.get<{ overdue: Opportunity[]; upcoming: Opportunity[] }>("/api/internal/followups");
+    setOverdue(queue.overdue);
+    setUpcoming(queue.upcoming);
   }
 
   async function runNow() {
@@ -47,9 +52,6 @@ export default function FollowUpsPage() {
     setRunning(false);
     fetchOpportunities();
   }
-
-  const overdue = opps.filter((o) => o.nextFollowUpAt && new Date(o.nextFollowUpAt) <= new Date());
-  const upcoming = opps.filter((o) => o.nextFollowUpAt && new Date(o.nextFollowUpAt) > new Date());
 
   return (
     <div className="pb-12">

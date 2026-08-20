@@ -13,7 +13,9 @@ import { ROLES, type Role } from "@/db/schema";
 interface Member {
   id: string;
   name: string;
-  email: string;
+  // Nullable — a member who signed up or was linked via phone/Google/Apple
+  // may have no password-auth email (see users.email in db/schema.ts).
+  email: string | null;
   role: Role;
   active: boolean;
 }
@@ -74,7 +76,7 @@ export default function TeamPage() {
               {members.map((m) => (
                 <tr key={m.id} className="border-b border-black/[0.05] dark:border-white/[0.05]">
                   <td className="px-4 py-2.5 text-ink-primary font-medium">{m.name}</td>
-                  <td className="px-4 py-2.5 text-ink-secondary">{m.email}</td>
+                  <td className="px-4 py-2.5 text-ink-secondary">{m.email || "—"}</td>
                   <td className="px-4 py-2.5">
                     <select
                       value={m.role}

@@ -11,7 +11,9 @@ export interface SessionPayload {
   userId: string;
   tenantId: string;
   role: Role;
-  email: string;
+  // Nullable — a phone-only or Google/Apple-only account may have no
+  // password-auth email (see users.email in schema.ts).
+  email: string | null;
   name: string;
 }
 

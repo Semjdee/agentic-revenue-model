@@ -1,9 +1,9 @@
 import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
-import { and, eq, lte, isNotNull, ne, lt } from "drizzle-orm";
+import { and, eq, lte, isNotNull } from "drizzle-orm";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
+import { MAX_ATTEMPTS, openFollowUpConditions } from "./service";
 
-const MAX_ATTEMPTS = 3;
 const REPEAT_INTERVAL_HOURS = 48;
 
 /**
@@ -19,14 +19,10 @@ const REPEAT_INTERVAL_HOURS = 48;
  *   - stop entirely once WON, LOST, opted out, or max attempts reached
  */
 export async function runFollowUpCheck(now: Date = new Date(), tenantId?: string) {
-  const conditions = [
-    isNotNull(schema.opportunities.nextFollowUpAt),
-    lte(schema.opportunities.nextFollowUpAt, now),
-    ne(schema.opportunities.stage, "WON"),
-    ne(schema.opportunities.stage, "LOST"),
-    eq(schema.opportunities.aiFollowUpEnabled, true),
-    lt(schema.opportunities.followUpAttempts, MAX_ATTEMPTS),
-  ];
+  // Same "still open, AI-enabled, attempts remain" definition the Dashboard
+  // and Follow-ups page use to COUNT due opportunities (src/modules/followups/service.ts)
+  // — one shared definition of "due", not three independently-maintained ones.
+  const conditions = [...openFollowUpConditions(), isNotNull(schema.opportunities.nextFollowUpAt), lte(schema.opportunities.nextFollowUpAt, now)];
   if (tenantId) conditions.push(eq(schema.opportunities.tenantId, tenantId));
 
   const dueOpportunities = await db

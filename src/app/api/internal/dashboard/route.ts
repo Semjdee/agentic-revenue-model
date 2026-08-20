@@ -3,6 +3,7 @@ import { db, schema } from "@/db/client";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
+import { countOverdueFollowUps } from "@/modules/followups/service";
 
 function rangeFromQuery(req: NextRequest): { from: Date; to: Date } {
   const range = req.nextUrl.searchParams.get("range") || "7d";
@@ -96,10 +97,11 @@ export async function GET(req: NextRequest) {
 
   // Needs attention
   const now = new Date();
-  const overdueFollowUps = await db
-    .select()
-    .from(schema.opportunities)
-    .where(and(eq(schema.opportunities.tenantId, tenantId), lte(schema.opportunities.nextFollowUpAt, now)));
+  // Shared with the Follow-ups page (src/modules/followups/service.ts) so
+  // the two can never disagree on what counts as "overdue" — see that
+  // file's doc comment for what "overdue" actually excludes (WON/LOST,
+  // AI-follow-up-disabled, and maxed-out-attempts opportunities).
+  const overdueFollowUpsCount = await countOverdueFollowUps(tenantId, now);
   const hotLeads = await db
     .select()
     .from(schema.leads)
@@ -136,7 +138,7 @@ export async function GET(req: NextRequest) {
     channelPerformance: channelRows,
     trafficSourcePerformance: sourceRows,
     needsAttention: {
-      overdueFollowUps: overdueFollowUps.length,
+      overdueFollowUps: overdueFollowUpsCount,
       hotLeads: hotLeads.length,
       pendingRecommendations: pendingRecommendations.length,
       failedWebhooks: failedWebhooks.length,

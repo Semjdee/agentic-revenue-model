@@ -49,7 +49,7 @@ export function Shell({
   session,
   children,
 }: {
-  session: { name: string; email: string; role: Role };
+  session: { name: string; email: string | null; role: Role };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();

@@ -1,14 +1,11 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { db, schema } from "@/db/client";
-import { generateId } from "@/lib/ids";
 import { hashPassword, setSessionCookie } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
 import { eq } from "drizzle-orm";
-import { logAudit } from "@/lib/audit";
-import { initOnboardingProgress, advanceOnboardingStep, logOnboardingEvent } from "@/modules/onboarding/service";
-import { grantCredits } from "@/modules/billing/ledger";
-import { FREE_TIER_GRANT_CREDITS } from "@/modules/billing/pricing";
+import { checkPasswordStrength } from "@/lib/password-strength";
+import { provisionTenant } from "@/modules/auth/provision";
 
 const bodySchema = z.object({
   companyName: z.string().min(2),
@@ -28,40 +25,17 @@ export async function POST(req: NextRequest) {
   const [existing] = await db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
   if (existing) return jsonError("An account with this email already exists", 409);
 
-  const tenantId = generateId();
-  const slug = companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) + "-" + tenantId.slice(0, 6);
-  await db.insert(schema.tenants).values({ id: tenantId, name: companyName, slug });
+  // Audit finding F-4: length alone lets through plenty of realistically
+  // guessable passwords. zxcvbn-style scoring also checks the password
+  // isn't just a trivial variant of the email/name/company being signed
+  // up with (see src/lib/password-strength.ts).
+  const strength = checkPasswordStrength(password, [email, name, companyName]);
+  if (!strength.ok) {
+    return jsonError(strength.warning || "This password is too easy to guess — please choose a stronger one.", 422, "WEAK_PASSWORD");
+  }
 
-  const workspaceId = generateId();
-  await db.insert(schema.workspaces).values({ id: workspaceId, tenantId, name: "Default Workspace" });
-
-  const userId = generateId();
   const passwordHash = await hashPassword(password);
-  await db.insert(schema.users).values({
-    id: userId,
-    tenantId,
-    workspaceId,
-    email,
-    passwordHash,
-    name,
-    role: "OWNER",
-  });
-
-  await logAudit({ tenantId, userId, action: "tenant.created", entity: "tenant", entityId: tenantId, source: "APP" });
-
-  // Free-tier credit grant (src/modules/billing/) — every new tenant starts
-  // with a real, metered balance, not unlimited AI usage.
-  await grantCredits(tenantId, FREE_TIER_GRANT_CREDITS, "GRANT", "free_tier_signup");
-
-  // Zero-to-live self-onboarding (docs/ONBOARDING_SPEC.md) starts here —
-  // every fresh signup gets a progress row + funnel events immediately,
-  // not as an afterthought bolted onto some later step.
-  await initOnboardingProgress(tenantId);
-  await logOnboardingEvent(tenantId, "signup_completed", { email });
-  await logOnboardingEvent(tenantId, "workspace_created", { workspaceId });
-  // Reaching this line means account + workspace genuinely exist — mark
-  // ACCOUNT done and land the wizard on BUSINESS_PROFILE next.
-  await advanceOnboardingStep(tenantId, "ACCOUNT", "BUSINESS_PROFILE");
+  const { tenantId, userId } = await provisionTenant({ companyName, ownerName: name, email, passwordHash });
 
   await setSessionCookie({ userId, tenantId, role: "OWNER", email, name });
   return jsonOk({ tenantId, userId });

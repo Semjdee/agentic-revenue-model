@@ -79,8 +79,18 @@ export const users = pgTable(
     id: id(),
     tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
     workspaceId: text("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
-    email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // email + passwordHash are nullable now that a user can also exist via
+    // phone/SMS OTP or a Google/Apple sign-in (auth_identities below) with
+    // no password at all. A password-auth user still always has both; a
+    // phone-only or OAuth-only user has neither. Postgres unique indexes
+    // ignore NULLs, so multiple phone-only users with no email don't
+    // collide on this index.
+    email: text("email"),
+    passwordHash: text("password_hash"),
+    // Globally unique (not tenant-scoped) — phone login, like email login,
+    // has to resolve which account it is before it knows the tenant.
+    phone: text("phone"),
+    phoneVerifiedAt: ts("phone_verified_at"),
     name: text("name").notNull(),
     role: text("role").$type<Role>().notNull().default("SALES"),
     avatarUrl: text("avatar_url"),
@@ -89,7 +99,56 @@ export const users = pgTable(
   },
   (t) => ({
     tenantEmailIdx: uniqueIndex("users_tenant_email_idx").on(t.tenantId, t.email),
+    phoneIdx: uniqueIndex("users_phone_idx").on(t.phone),
   })
+);
+
+// Links a user to a third-party identity provider (Google / Apple Sign-In)
+// — a user can have a password AND a Google identity AND a phone, all
+// pointing at the same account, same spirit as contact_identities below
+// for customer-facing identities. providerUserId is that provider's
+// stable subject id ("sub" claim for OIDC), never the email (an email
+// can change; the sub cannot).
+export const AUTH_IDENTITY_PROVIDERS = ["GOOGLE", "APPLE"] as const;
+
+export const authIdentities = pgTable(
+  "auth_identities",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<(typeof AUTH_IDENTITY_PROVIDERS)[number]>().notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    email: text("email"), // informational — the email the provider reported at link time
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    providerIdx: uniqueIndex("auth_identities_provider_idx").on(t.provider, t.providerUserId),
+    userIdx: index("auth_identities_user_idx").on(t.userId),
+  })
+);
+
+// Phone/SMS one-time-passcode verification, for both new-account signup
+// and returning-user login. DEMO/MOCK sender by default (no SMS provider
+// credentials in this environment — see modules/sms/*) — same "never fake
+// a completed integration" discipline as every other connector in this
+// codebase: the code is real, hashed, time-limited, and attempt-limited;
+// only DELIVERY is mocked (shown in the response) until a real SMS
+// provider is configured.
+export const OTP_PURPOSES = ["SIGNUP", "LOGIN"] as const;
+
+export const otpCodes = pgTable(
+  "otp_codes",
+  {
+    id: id(),
+    phone: text("phone").notNull(),
+    codeHash: text("code_hash").notNull(),
+    purpose: text("purpose").$type<(typeof OTP_PURPOSES)[number]>().notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: ts("expires_at").notNull(),
+    consumedAt: ts("consumed_at"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ phoneIdx: index("otp_codes_phone_idx").on(t.phone) })
 );
 
 // ---------------------------------------------------------------------------
