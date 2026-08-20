@@ -6,15 +6,28 @@ import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 // ============================================================================
 // Attribution Engine (spec section 12).
 //
-// Captures first-touch and last-touch attribution. Per-conversation UTM /
-// click-ID capture already happens on the `conversations` table (mirroring
-// what the widget sends — spec section 1). This service promotes that data
-// into durable `attribution_touches` rows tied to the Lead/Opportunity/Sale
-// once those entities exist, and records a `traffic_sessions` row per widget
-// session so the model is ready for true multi-touch attribution later
-// (currently we compute FIRST from the earliest conversation for a contact
-// and LAST from the most recent one — additional models, e.g. linear or
-// time-decay, can be added without a schema change).
+// Two things happen here, deliberately kept separate:
+//
+//   1. recordConversationTouch() — called the moment ANY conversation is
+//      created (website widget, WhatsApp, Instagram), regardless of
+//      whether it ever becomes a lead/opportunity/sale. This is the
+//      COMPLETE touch history: every contact interaction gets a durable
+//      attribution_touches row (touchType "TOUCH") as it happens, not
+//      retroactively. Without this, a contact who messaged three times
+//      before buying only ever had 2 touches recoverable (whichever
+//      conversations happened to be first/latest on the opportunity) —
+//      everything in between was gone. Necessary groundwork for
+//      assisted/multi-touch attribution later; not itself a new
+//      attribution MODEL (see markFirstLastTouch below — that's
+//      unchanged).
+//
+//   2. computeAttributionForOpportunity() — the existing first/last-touch
+//      MODEL (spec section 12), which promotes two specific touches
+//      (touchType "FIRST"/"LAST") once an opportunity exists, linking
+//      leadId/opportunityId/saleId. Reporting (revenue by source/
+//      campaign on the Attribution page) reads these two types
+//      specifically — left untouched so that page's behavior doesn't
+//      change. "TOUCH" rows are additive alongside them, for future use.
 // ============================================================================
 
 export async function recordTrafficSession(params: {
@@ -48,14 +61,18 @@ export async function recordTrafficSession(params: {
   });
 }
 
-function conversationToTouch(conv: typeof schema.conversations.$inferSelect, touchType: "FIRST" | "LAST") {
+function conversationToTouch(conv: typeof schema.conversations.$inferSelect, touchType: "FIRST" | "LAST" | "TOUCH") {
   return {
     id: generateId(),
     tenantId: conv.tenantId,
     sessionId: conv.sessionId,
     contactId: conv.contactId,
-    source: conv.utmSource ?? (conv.gclid ? "google" : conv.fbclid ? "meta" : "direct"),
-    medium: conv.utmMedium ?? "organic",
+    // Channel-aware fallback — a WhatsApp/Instagram conversation with no
+    // UTM data is a real, known-source touch ("whatsapp"/"instagram"),
+    // not an unattributed "direct" visit; "direct" is now reserved for
+    // an actual unattributed website visit.
+    source: conv.utmSource ?? (conv.gclid ? "google" : conv.fbclid ? "meta" : conv.channel !== "WEBSITE" ? conv.channel.toLowerCase() : "direct"),
+    medium: conv.utmMedium ?? (conv.channel !== "WEBSITE" ? "messaging" : "organic"),
     campaign: conv.utmCampaign ?? null,
     // utm_content conventionally carries the ad/creative identifier.
     adName: conv.utmContent ?? null,
@@ -71,6 +88,20 @@ function conversationToTouch(conv: typeof schema.conversations.$inferSelect, tou
     referringPage: conv.referringUrl,
     touchType,
   };
+}
+
+/**
+ * Records one durable attribution_touches row for a brand-new
+ * conversation — call this once, right after the conversation is
+ * inserted, from every conversation-creation path (website widget via
+ * startConversation, WhatsApp/Instagram via startChannelConversation —
+ * see src/modules/conversations/engine.ts). This is what makes the
+ * touch history complete: a contact's every interaction is captured as
+ * it happens, not reconstructed later from whichever two conversations
+ * happened to be linked to an eventual opportunity.
+ */
+export async function recordConversationTouch(conv: typeof schema.conversations.$inferSelect) {
+  await db.insert(schema.attributionTouches).values(conversationToTouch(conv, "TOUCH"));
 }
 
 /**

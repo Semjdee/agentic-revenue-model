@@ -26,6 +26,33 @@ const id = () => text("id").primaryKey();
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
 // ---------------------------------------------------------------------------
+// PLATFORM STAFF — deliberately OUTSIDE the tenant model entirely. Every
+// other table in this file carries a tenantId and every query in
+// src/app/api/internal/** filters by the signed-in user's tenant; this
+// table has no tenantId column at all, on purpose, so it structurally
+// cannot be reached by that isolation logic or confused with a tenant
+// `users` row. Session handling lives in a separate module
+// (src/lib/platform-auth.ts) with its own cookie name and JWT payload
+// shape, and there is deliberately no self-service signup route for
+// this table — accounts are provisioned only via
+// scripts/create-platform-staff.ts, run by whoever operates the
+// platform. See src/app/platform/** for the admin surface this powers
+// (cross-tenant analytics — something no per-tenant role should ever be
+// able to reach).
+// ---------------------------------------------------------------------------
+export const PLATFORM_ROLES = ["PLATFORM_SUPER_ADMIN", "PLATFORM_SUPPORT", "PLATFORM_FINANCE", "PLATFORM_OPERATIONS"] as const;
+
+export const platformStaff = pgTable("platform_staff", {
+  id: id(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  role: text("role").$type<(typeof PLATFORM_ROLES)[number]>().notNull().default("PLATFORM_SUPPORT"),
+  active: boolean("active").notNull().default(true),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
 // 23. MULTI-TENANCY
 // ---------------------------------------------------------------------------
 export const tenants = pgTable("tenants", {

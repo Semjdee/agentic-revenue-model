@@ -8,7 +8,7 @@ import { executeToolCalls } from "@/modules/ai/actions";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
 import type { ConversationTurn } from "@/modules/ai/types";
-import { recordTrafficSession } from "@/modules/attribution/service";
+import { recordTrafficSession, recordConversationTouch } from "@/modules/attribution/service";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import { ensureLegacyWidgetForAgent, firstEnabledWidgetAgent } from "@/modules/widgets/service";
 import { routeConversation } from "@/modules/widgets/router";
@@ -142,6 +142,9 @@ export async function startConversation(input: StartConversationInput) {
     consentAcknowledged: input.consentAcknowledged ?? false,
   });
 
+  const [newConversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
+  if (newConversation) await recordConversationTouch(newConversation);
+
   await db.insert(schema.messages).values({
     id: generateId(),
     tenantId,
@@ -220,10 +223,11 @@ export async function startChannelConversation(input: {
   if (!conversation) {
     const conversationId = generateId();
     await db.insert(schema.conversations).values({ id: conversationId, tenantId, contactId, agentId: agent.id, channel });
+    [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
+    if (conversation) await recordConversationTouch(conversation);
     await db.insert(schema.messages).values({ id: generateId(), tenantId, conversationId, sender: "AI", content: agent.greeting || `Hi! I'm ${agent.name}. How can I help you today?` });
     await dispatchWebhooks(tenantId, "conversation.created", { conversationId });
     await logOnboardingEventOnce(tenantId, "first_real_conversation", { conversationId, channel });
-    [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
   }
 
   const result = await handleCustomerMessage({ tenantId, conversationId: conversation.id, content });
