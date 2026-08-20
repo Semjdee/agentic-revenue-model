@@ -17,7 +17,34 @@
 import type { Config } from "@netlify/functions";
 import { runFollowUpCheck } from "../../src/modules/followups/processor";
 
+// If this repo is ALSO deployed as a second, admin-only site
+// (ADMIN_HOSTNAME split — see src/middleware.ts), that site would
+// otherwise run this exact same scheduled function on its own 5-minute
+// timer too — the schedule is a Netlify-site-level config, not something
+// the app's own request routing can gate the way middleware gates page/
+// API requests. Two independent crons hitting the same due opportunities
+// is a real double-send risk, not a hypothetical one, so this function
+// skips entirely on any deploy whose own URL matches ADMIN_HOSTNAME.
+// `URL` is set automatically by Netlify to the site's own canonical
+// address (https://docs.netlify.com/configure-builds/environment-variables/).
+function isAdminSite(): boolean {
+  const adminHostname = process.env.ADMIN_HOSTNAME;
+  const ownUrl = process.env.URL;
+  if (!adminHostname || !ownUrl) return false;
+  try {
+    return new URL(ownUrl).host === adminHostname;
+  } catch {
+    return false;
+  }
+}
+
 export default async () => {
+  if (isAdminSite()) {
+    return new Response(JSON.stringify({ skipped: "admin site — follow-up processing runs on the main site only" }), {
+      headers: { "content-type": "application/json" },
+    });
+  }
+
   const results = await runFollowUpCheck();
   if (results.length) {
     // eslint-disable-next-line no-console
