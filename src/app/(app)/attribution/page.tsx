@@ -5,10 +5,18 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 
+interface AssistedRow {
+  source: string;
+  closedConversions: number;
+  closedRevenue: number;
+  assistedConversions: number;
+  assistedRevenue: number;
+}
 interface AttributionData {
   revenueBySource: { source: string; revenue: number }[];
   revenueByCampaign: { campaign: string; revenue: number }[];
   touches: { id: string; touchType: string; source: string | null; campaign: string | null; createdAt: string }[];
+  assisted: AssistedRow[];
 }
 interface OrganicSearchData {
   connected: boolean;
@@ -64,6 +72,44 @@ export default function AttributionPage() {
                   .map((row, i) => (
                     <Bar key={row.campaign} label={row.campaign} value={row.revenue} max={data.revenueByCampaign[0].revenue} color={["#2a78d6", "#eb6834", "#1baf7a", "#eda100"][i % 4]} format={fmtUGX} />
                   ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card overflow-hidden md:col-span-2">
+            <div className="p-4 pb-2">
+              <p className="text-[13px] font-semibold text-ink-primary">Assisted conversions</p>
+              <p className="text-[12px] text-ink-muted mt-0.5">
+                First/last touch above only credits the opening and closing interaction of a deal. This shows every source that appeared earlier in the path but didn&apos;t close it —
+                the channels that helped without getting the final click.
+              </p>
+            </div>
+            {data.assisted.length === 0 ? (
+              <p className="text-[12.5px] text-ink-muted px-4 pb-4">No multi-touch conversions yet — every sale so far converted on its first interaction.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
+                      <th className="px-4 py-2 font-medium">Source</th>
+                      <th className="px-4 py-2 font-medium text-right">Closed (last-click)</th>
+                      <th className="px-4 py-2 font-medium text-right">Closed revenue</th>
+                      <th className="px-4 py-2 font-medium text-right">Assisted conversions</th>
+                      <th className="px-4 py-2 font-medium text-right">Assisted revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.assisted.map((row) => (
+                      <tr key={row.source} className="border-b border-black/[0.05] dark:border-white/[0.05]">
+                        <td className="px-4 py-2 text-ink-primary capitalize">{row.source}</td>
+                        <td className="px-4 py-2 text-ink-secondary text-right tabular-nums">{row.closedConversions}</td>
+                        <td className="px-4 py-2 text-ink-secondary text-right tabular-nums">{fmtUGX(row.closedRevenue)}</td>
+                        <td className="px-4 py-2 text-ink-secondary text-right tabular-nums">{row.assistedConversions}</td>
+                        <td className="px-4 py-2 text-ink-secondary text-right tabular-nums">{fmtUGX(row.assistedRevenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

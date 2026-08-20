@@ -1,6 +1,6 @@
 import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 
 // ============================================================================
@@ -132,4 +132,98 @@ export async function computeAttributionForOpportunity(opportunityId: string, sa
       await logOnboardingEventOnce(opp.tenantId, "first_attributed_sale", { saleId, opportunityId: opp.id });
     }
   }
+}
+
+// ============================================================================
+// Assisted attribution (docs backlog: "Assisted/Multi-touch attribution").
+//
+// FIRST/LAST touch (above) only ever credits the opening and closing
+// interaction of a deal — a contact who saw an Instagram ad, later clicked
+// a Google search ad, then converted via a WhatsApp chat shows 100% of the
+// credit on WhatsApp and Instagram, with the Google touch invisible even
+// though it was part of the path. This is the standard "assisted
+// conversions" report (the same shape GA/GA4 popularized): for every WON
+// sale, walk the contact's COMPLETE touch history up to the moment of
+// conversion (recordConversationTouch() is what makes that complete
+// history exist at all — every "TOUCH" row, not just FIRST/LAST) and
+// credit every source that appeared along the path, distinguishing the
+// closing touch from the touches that merely assisted.
+//
+// Deliberately the simpler binary "did this channel appear in the path"
+// model rather than fractional multi-touch weighting (linear/time-decay/
+// algorithmic) — the module docblock above already earmarks those as a
+// meaningfully bigger, later step; this is the well-understood classic
+// report, computed on demand rather than stored (same pattern as
+// generateAdvertisingRecommendations/computeCampaignPerformance).
+// ============================================================================
+
+export interface AssistedAttributionRow {
+  source: string;
+  closedConversions: number;
+  closedRevenue: number;
+  assistedConversions: number;
+  assistedRevenue: number;
+}
+
+export async function computeAssistedAttribution(tenantId: string): Promise<AssistedAttributionRow[]> {
+  const lastTouches = await db
+    .select()
+    .from(schema.attributionTouches)
+    .where(and(eq(schema.attributionTouches.tenantId, tenantId), eq(schema.attributionTouches.touchType, "LAST")));
+  const conversions = lastTouches.filter((t) => t.saleId && t.contactId);
+  if (!conversions.length) return [];
+
+  const sales = await db.select().from(schema.sales).where(eq(schema.sales.tenantId, tenantId));
+  const saleAmountById = new Map(sales.map((s) => [s.id, Number(s.amount)]));
+
+  const allTouches = await db
+    .select()
+    .from(schema.attributionTouches)
+    .where(and(eq(schema.attributionTouches.tenantId, tenantId), eq(schema.attributionTouches.touchType, "TOUCH")));
+  const touchesByContact = new Map<string, (typeof allTouches)[number][]>();
+  for (const t of allTouches) {
+    if (!t.contactId) continue;
+    const list = touchesByContact.get(t.contactId) ?? [];
+    list.push(t);
+    touchesByContact.set(t.contactId, list);
+  }
+
+  const bySource = new Map<string, AssistedAttributionRow>();
+  const rowFor = (source: string) => {
+    let row = bySource.get(source);
+    if (!row) {
+      row = { source, closedConversions: 0, closedRevenue: 0, assistedConversions: 0, assistedRevenue: 0 };
+      bySource.set(source, row);
+    }
+    return row;
+  };
+
+  for (const conv of conversions) {
+    const revenue = saleAmountById.get(conv.saleId!) ?? 0;
+    const journey = (touchesByContact.get(conv.contactId!) ?? [])
+      .filter((t) => new Date(t.createdAt).getTime() <= new Date(conv.createdAt).getTime())
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    // The chronologically last touch up to conversion is the closer —
+    // prefer it over the promoted LAST row's own source in the rare case
+    // they disagree (e.g. the LAST row was computed before a later touch
+    // in the same session landed), since it reflects the actual path.
+    const closer = journey[journey.length - 1];
+    const closingSource = closer?.source || conv.source || "direct";
+    rowFor(closingSource).closedConversions += 1;
+    rowFor(closingSource).closedRevenue += revenue;
+
+    // Every OTHER source that appeared earlier in the path gets assist
+    // credit — once per conversion per source, not once per touch, so a
+    // channel touched twice pre-conversion still counts as one assist
+    // (the standard "assisted conversions" definition).
+    const assistingSources = new Set(journey.slice(0, -1).map((t) => t.source || "direct"));
+    assistingSources.delete(closingSource);
+    for (const source of assistingSources) {
+      rowFor(source).assistedConversions += 1;
+      rowFor(source).assistedRevenue += revenue;
+    }
+  }
+
+  return Array.from(bySource.values()).sort((a, b) => b.assistedConversions + b.closedConversions - (a.assistedConversions + a.closedConversions));
 }

@@ -2,6 +2,7 @@ import { db, schema } from "@/db/client";
 import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
+import { computeAssistedAttribution } from "@/modules/attribution/service";
 
 // Answers the spec section 12 questions: which campaign generated this
 // customer / this sale, and how much revenue came from each source.
@@ -25,9 +26,12 @@ export async function GET() {
     revenueByCampaign[campaign] = (revenueByCampaign[campaign] ?? 0) + Number(sale.amount);
   }
 
+  const assisted = await computeAssistedAttribution(session.tenantId);
+
   return jsonOk({
     touches,
     revenueBySource: Object.entries(revenueBySource).map(([source, revenue]) => ({ source, revenue })),
     revenueByCampaign: Object.entries(revenueByCampaign).map(([campaign, revenue]) => ({ campaign, revenue })),
+    assisted,
   });
 }
