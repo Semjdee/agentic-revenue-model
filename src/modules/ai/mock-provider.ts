@@ -30,6 +30,22 @@ const AFFIRM_QUOTE_PATTERN = /\b(yes|yeah|sure|please|go ahead|quote|quotation|s
 const PHONE_PATTERN = /(\+?\d[\d\s-]{7,}\d)/;
 const EMAIL_PATTERN = /[\w.+-]+@[\w-]+\.[a-z.]{2,}/i;
 
+// When the qualification question being answered is "what's your name",
+// customers rarely reply with just the name — "My name is John Mukasa",
+// "I'm John", "This is John" are all common. Splitting on punctuation
+// alone (the old behavior) only helps when the reply happens to contain
+// a comma/period, so a plain "My name is John Mukasa" fell straight
+// through as the literal contact name. Strip the common lead-ins first,
+// then fall back to the punctuation split for whatever's left.
+const NAME_LEADIN_PATTERN = /^(my\s+name\s+is|i\s*'?\s*m|i\s+am|this\s+is|it'?s|call\s+me|name'?s)\s+/i;
+
+function parseNameFromAnswer(answer: string): string {
+  const trimmed = answer.trim();
+  const leadinMatch = trimmed.match(NAME_LEADIN_PATTERN);
+  const withoutLeadin = leadinMatch ? trimmed.slice(leadinMatch[0].length).trim() : trimmed;
+  return withoutLeadin.split(/[.,!]/)[0].slice(0, 80);
+}
+
 function scoreProduct(text: string, product: AIProviderContext["products"][number]): number {
   const haystack = `${product.name} ${product.category ?? ""} ${product.description ?? ""} ${(
     product.features || []
@@ -109,7 +125,7 @@ export class MockAIProvider implements AIProvider {
     // --- Qualification phase: still working through the slot-filling questions
     if (idx < questions.length - 1) {
       const currentQuestion = questions[idx];
-      if (/name/i.test(currentQuestion)) extractedFields.name = latest.trim().split(/[.,!]/)[0].slice(0, 80);
+      if (/name/i.test(currentQuestion)) extractedFields.name = parseNameFromAnswer(latest);
       if (/location|where|home|business|address|city/i.test(currentQuestion)) extractedFields.location = latest.trim();
       if (/budget/i.test(currentQuestion)) extractedFields.budget = latest.trim();
       if (idx === 0) extractedFields.requirements = latest.trim();
@@ -133,7 +149,7 @@ export class MockAIProvider implements AIProvider {
     // Last qualification answer just arrived
     if (idx === questions.length - 1) {
       const lastQuestion = questions[idx];
-      if (/name/i.test(lastQuestion)) extractedFields.name = latest.trim().split(/[.,!]/)[0].slice(0, 80);
+      if (/name/i.test(lastQuestion)) extractedFields.name = parseNameFromAnswer(latest);
       if (/location|where|home|business|address|city/i.test(lastQuestion)) extractedFields.location = latest.trim();
       if (/budget/i.test(lastQuestion)) extractedFields.budget = latest.trim();
 

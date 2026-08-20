@@ -52,7 +52,9 @@ Respond with STRICT JSON only, matching this TypeScript type, and nothing else:
   "extractedFields": { "name"?: string, "phone"?: string, "email"?: string, "location"?: string, "budget"?: string, "requirements"?: string }
 }
 
-Valid tool call actions: create_contact, update_contact, create_lead, update_lead, create_opportunity, update_opportunity, schedule_followup, create_task, request_human, record_sale, offer_discount.`;
+Valid tool call actions: create_contact, update_contact, create_lead, update_lead, create_opportunity, update_opportunity, schedule_followup, create_task, request_human, record_sale, offer_discount.
+
+When extracting "name" (both in extractedFields and in any create_contact/update_contact tool call parameters), give ONLY the person's actual name (e.g. "John Mukasa") — never the customer's full sentence. If they wrote "My name is John Mukasa" or "I'm John", extract just "John Mukasa" / "John". Do the same for phone/email: the bare value, not the sentence it appeared in.`;
 
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";

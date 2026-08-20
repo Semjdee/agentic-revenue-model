@@ -7,7 +7,7 @@ import { chooseModel } from "@/modules/billing/model-router";
 import { executeToolCalls } from "@/modules/ai/actions";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
-import type { ConversationTurn } from "@/modules/ai/types";
+import type { ConversationTurn, ToolCall, AIReplyResult } from "@/modules/ai/types";
 import { recordTrafficSession, recordConversationTouch } from "@/modules/attribution/service";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import { ensureLegacyWidgetForAgent, firstEnabledWidgetAgent } from "@/modules/widgets/service";
@@ -240,6 +240,36 @@ export async function startChannelConversation(input: {
  * webhook (WhatsApp/Instagram/Messenger) since they all funnel through the
  * same Conversation/Message model (section 4).
  */
+
+// Every AI reply carries `extractedFields` alongside `toolCalls` (both
+// providers populate it — see mock-provider.ts / anthropic-provider.ts),
+// but until now nothing ever read it: a create_contact/update_contact
+// call already covers the common case, so this only matters when the
+// model reports something in extractedFields without also emitting the
+// matching tool call (a forgotten call, not a bad value — actions.ts's
+// upsertContactFields is the defensive backstop for bad values). Rather
+// than a parallel side-channel write, fold any such gap into the existing
+// create_contact/update_contact call so it goes through the one audited,
+// idempotent path.
+function mergeExtractedFieldsIntoToolCalls(
+  toolCalls: ToolCall[],
+  extractedFields: AIReplyResult["extractedFields"]
+): ToolCall[] {
+  const gap: Record<string, string> = {};
+  const contactCall = toolCalls.find((c) => c.action === "create_contact" || c.action === "update_contact");
+  for (const field of ["name", "phone", "email"] as const) {
+    const value = extractedFields[field];
+    if (!value) continue;
+    const alreadyCarried = contactCall && typeof contactCall.parameters[field] === "string" && (contactCall.parameters[field] as string).trim();
+    if (!alreadyCarried) gap[field] = value;
+  }
+  if (Object.keys(gap).length === 0) return toolCalls;
+  if (contactCall) {
+    return toolCalls.map((c) => (c === contactCall ? { ...c, parameters: { ...c.parameters, ...gap } } : c));
+  }
+  return [...toolCalls, { action: "update_contact", parameters: gap }];
+}
+
 export async function handleCustomerMessage(params: {
   tenantId: string;
   conversationId: string;
@@ -445,7 +475,7 @@ export async function handleCustomerMessage(params: {
       utmCampaign: conversation.utmCampaign,
       runId: run.id,
     },
-    reply.toolCalls
+    mergeExtractedFieldsIntoToolCalls(reply.toolCalls, reply.extractedFields)
   );
 
   await db.insert(schema.messages).values({

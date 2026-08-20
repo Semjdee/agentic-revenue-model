@@ -75,9 +75,38 @@ export interface ExecutionResult extends ExecutionState {
   executed: { action: string; status: string }[];
 }
 
+// Both AI providers can, in principle, hand back a raw customer sentence
+// ("My name is John Mukasa") instead of the extracted name itself — the
+// mock provider used to do this outright (see mock-provider.ts fix), and
+// even a real LLM can slip on an oddly-phrased reply. This is the single
+// place every AI-sourced contact name passes through before it's saved,
+// so it's the right spot for a defensive backstop rather than trusting
+// either provider to always hand back a clean value.
+const NAME_LEADIN_PATTERN = /^(my\s+name\s+is|i\s*'?\s*m|i\s+am|this\s+is|it'?s|call\s+me|name'?s)\s+/i;
+
+function sanitizeExtractedName(raw: string): string | null {
+  let name = raw.trim();
+  const leadinMatch = name.match(NAME_LEADIN_PATTERN);
+  if (leadinMatch) name = name.slice(leadinMatch[0].length).trim();
+  // Strip a trailing "and I live in..." / "and my number is..." runs-on,
+  // keep just the name clause itself.
+  name = name.split(/[.,!?;]/)[0].trim();
+  if (!name) return null;
+  // A genuine name is a handful of words; anything longer is almost
+  // certainly still a sentence fragment that slipped past the checks
+  // above (e.g. no punctuation for split() to catch), so reject rather
+  // than save garbage into the contact record.
+  const wordCount = name.split(/\s+/).length;
+  if (wordCount > 5 || name.length > 80) return null;
+  return name;
+}
+
 async function upsertContactFields(tenantId: string, contactId: string, params: Record<string, unknown>) {
   const patch: Record<string, unknown> = {};
-  if (typeof params.name === "string" && params.name.trim()) patch.name = params.name.trim();
+  if (typeof params.name === "string" && params.name.trim()) {
+    const cleanName = sanitizeExtractedName(params.name);
+    if (cleanName) patch.name = cleanName;
+  }
   if (typeof params.phone === "string" && params.phone.trim()) patch.phone = params.phone.trim();
   if (typeof params.email === "string" && params.email.trim()) patch.email = params.email.trim();
   if (Object.keys(patch).length === 0) return;
