@@ -13,6 +13,7 @@ interface IntegrationCard {
   category: string;
   status: string;
   isMock: boolean;
+  lastSyncAt: string | null;
   id: string | null;
 }
 
@@ -112,6 +113,11 @@ export default function IntegrationsPage() {
                         {c.status === "CONNECTED" ? "Disconnect" : "Connect"}
                       </Button>
                     </div>
+                    {c.status === "CONNECTED" && (
+                      <p className="text-[11px] text-ink-muted mt-2">
+                        {c.lastSyncAt ? `Last synced ${new Date(c.lastSyncAt).toLocaleString()}` : "Not synced yet — records sync as leads/contacts/opportunities are created or updated"}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>

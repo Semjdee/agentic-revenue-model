@@ -10,6 +10,7 @@ import { logAudit } from "@/lib/audit";
 import { LEAD_STAGES } from "@/db/schema";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
 import { computeAttributionForOpportunity } from "@/modules/attribution/service";
+import { syncOpportunityToCrm } from "@/modules/crm/sync";
 
 const patchSchema = z.object({
   stage: z.enum(LEAD_STAGES).optional(),
@@ -71,6 +72,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   } else {
     await dispatchWebhooks(session.tenantId, "opportunity.updated", { opportunityId: params.id });
   }
+
+  // Best-effort push to the tenant's connected CRM, if any — a manual
+  // edit from the back office deserves the same sync a tool-call-driven
+  // AI update gets (see modules/crm/sync.ts).
+  await syncOpportunityToCrm(session.tenantId, params.id);
 
   return jsonOk({ ok: true, saleId });
 }

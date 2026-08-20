@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
 import { hasPermission } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
+import { syncContactToCrm } from "@/modules/crm/sync";
 
 const patchSchema = z.object({
   name: z.string().optional(),
@@ -45,5 +46,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .where(and(eq(schema.contacts.id, params.id), eq(schema.contacts.tenantId, session.tenantId)));
 
   await logAudit({ tenantId: session.tenantId, userId: session.userId, action: "contact.updated", entity: "contact", entityId: params.id, before, after: parsed.data });
+  await syncContactToCrm(session.tenantId, params.id);
   return jsonOk({ ok: true });
 }

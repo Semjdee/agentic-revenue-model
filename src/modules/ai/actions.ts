@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import type { ToolCall } from "./types";
 import { actionSignature } from "./execution-gateway";
+import { syncContactToCrm, syncLeadToCrm, syncOpportunityToCrm } from "@/modules/crm/sync";
 
 // Cross-run idempotency window (multi-agent-routing spec Part B §19-20):
 // how long a successfully-EXECUTED action "remembers" itself for this
@@ -248,6 +249,11 @@ export async function executeToolCalls(
         case "create_contact":
         case "update_contact": {
           await upsertContactFields(state.tenantId, state.contactId, call.parameters);
+          // Push out to the tenant's connected CRM, if any (no-op, returns
+          // null, when nothing is connected — see modules/crm/sync.ts).
+          // Best-effort: sync.ts catches its own errors, so a downstream
+          // CRM failure never blocks or rolls back the local write above.
+          await syncContactToCrm(state.tenantId, state.contactId);
           result = { contactId: state.contactId };
           break;
         }
@@ -282,6 +288,7 @@ export async function executeToolCalls(
             // follow.
             await logOnboardingEventOnce(state.tenantId, "first_lead_created", { leadId: newLeadId });
           }
+          if (leadId) await syncLeadToCrm(state.tenantId, leadId);
           result = { leadId };
           break;
         }
@@ -303,6 +310,7 @@ export async function executeToolCalls(
               });
               await logOnboardingEventOnce(state.tenantId, "first_qualified_lead", { leadId });
             }
+            await syncLeadToCrm(state.tenantId, leadId);
           }
           result = { leadId };
           break;
@@ -339,6 +347,7 @@ export async function executeToolCalls(
               .set({ stage: (call.parameters.stage as string as "QUOTATION") || undefined, updatedAt: new Date() })
               .where(eq(schema.opportunities.id, opportunityId));
           }
+          if (opportunityId) await syncOpportunityToCrm(state.tenantId, opportunityId);
           result = { opportunityId };
           break;
         }
@@ -348,6 +357,7 @@ export async function executeToolCalls(
             if (call.parameters.stage) patch.stage = call.parameters.stage;
             if (call.parameters.lostReason) patch.lostReason = call.parameters.lostReason;
             await db.update(schema.opportunities).set(patch).where(eq(schema.opportunities.id, opportunityId));
+            await syncOpportunityToCrm(state.tenantId, opportunityId);
           }
           result = { opportunityId };
           break;
@@ -435,6 +445,7 @@ export async function executeToolCalls(
               after: { amount },
             });
             await logOnboardingEventOnce(state.tenantId, "first_sale", { saleId, amount });
+            await syncOpportunityToCrm(state.tenantId, opportunityId);
             result = { saleId };
           }
           break;

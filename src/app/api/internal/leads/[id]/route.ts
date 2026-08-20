@@ -8,6 +8,7 @@ import { hasPermission } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
 import { LEAD_STAGES } from "@/db/schema";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
+import { syncLeadToCrm } from "@/modules/crm/sync";
 
 const patchSchema = z.object({
   stage: z.enum(LEAD_STAGES).optional(),
@@ -30,6 +31,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   await logAudit({ tenantId: session.tenantId, userId: session.userId, action: "lead.updated", entity: "lead", entityId: params.id, before, after: parsed.data });
   if (parsed.data.stage === "QUALIFIED") await dispatchWebhooks(session.tenantId, "lead.qualified", { leadId: params.id });
   else await dispatchWebhooks(session.tenantId, "lead.updated", { leadId: params.id });
+
+  // Best-effort push to the tenant's connected CRM, if any (see
+  // modules/crm/sync.ts) — same sync a tool-call-driven AI update gets.
+  await syncLeadToCrm(session.tenantId, params.id);
 
   return jsonOk({ ok: true });
 }
