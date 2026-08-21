@@ -6,7 +6,9 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { PlayCircle, Check, X } from "lucide-react";
+import { Dialog } from "@/components/ui/dialog";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { PlayCircle, Check, X, Plus, Pencil, Trash2 } from "lucide-react";
 import clsx from "clsx";
 
 interface Approval {
@@ -41,6 +43,9 @@ export default function SettingsPage() {
             <Tabs.Trigger value="engine" className={TAB_CLASS}>
               Follow-up Engine
             </Tabs.Trigger>
+            <Tabs.Trigger value="followup-templates" className={TAB_CLASS}>
+              Follow-up Templates
+            </Tabs.Trigger>
             <Tabs.Trigger value="approvals" className={TAB_CLASS}>
               Approvals
             </Tabs.Trigger>
@@ -60,6 +65,9 @@ export default function SettingsPage() {
 
           <Tabs.Content value="engine" className="max-w-xl">
             <EngineTab />
+          </Tabs.Content>
+          <Tabs.Content value="followup-templates" className="max-w-2xl">
+            <FollowUpTemplatesTab />
           </Tabs.Content>
           <Tabs.Content value="approvals" className="max-w-xl">
             <ApprovalsTab />
@@ -104,6 +112,220 @@ function EngineTab() {
       </Button>
       {result && <p className="text-[12.5px] text-status-good">{result}</p>}
     </div>
+  );
+}
+
+interface FollowUpTemplate {
+  id: string;
+  name: string;
+  messageBody: string;
+  isActive: boolean;
+}
+interface SequenceStep {
+  id: string;
+  stepOrder: number;
+  delayHours: number;
+  template: { id: string; name: string; messageBody: string };
+}
+interface TemplateVariable {
+  key: string;
+  description: string;
+}
+
+// Follow-up Templates — modules/followups/templates.ts. Real messages
+// the automated follow-up engine sends when a follow-up comes due
+// (modules/followups/processor.ts), tenant-owned and editable here —
+// replaces what used to be two strings hardcoded in that file. Never
+// AI-generated: this is the "don't over-depend on AI for a routine
+// re-engagement message" path.
+function FollowUpTemplatesTab() {
+  const [templates, setTemplates] = useState<FollowUpTemplate[]>([]);
+  const [variables, setVariables] = useState<TemplateVariable[]>([]);
+  const [steps, setSteps] = useState<SequenceStep[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<FollowUpTemplate | "new" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    const [tRes, sRes] = await Promise.all([
+      api.get<{ templates: FollowUpTemplate[]; availableVariables: TemplateVariable[] }>("/api/internal/followups/templates"),
+      api.get<{ steps: SequenceStep[] }>("/api/internal/followups/sequence"),
+    ]);
+    setTemplates(tRes.templates);
+    setVariables(tRes.availableVariables);
+    setSteps(sRes.steps);
+    setLoading(false);
+  }
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function deleteTemplate(id: string) {
+    setError(null);
+    try {
+      await api.del(`/api/internal/followups/templates/${id}`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete");
+    }
+  }
+
+  // Updates local state immediately (so typing feels responsive) but only
+  // persists to the API when `save` is true — the select fires that on
+  // every change (infrequent), the delay-hours number input fires it on
+  // blur instead of every keystroke.
+  function updateStepLocal(stepId: string, patch: Partial<{ templateId: string; delayHours: number }>): SequenceStep[] {
+    const nextSteps = steps.map((s) => (s.id === stepId ? { ...s, template: patch.templateId ? { ...s.template, id: patch.templateId } : s.template, delayHours: patch.delayHours ?? s.delayHours } : s));
+    setSteps(nextSteps);
+    return nextSteps;
+  }
+  async function persistSteps(nextSteps: SequenceStep[]) {
+    await api.patch("/api/internal/followups/sequence", {
+      steps: nextSteps.map((s) => ({ stepId: s.id, templateId: s.template.id, delayHours: s.delayHours })),
+    });
+  }
+
+  if (loading) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
+
+  return (
+    <div className="space-y-6">
+      <div className="card p-4 space-y-3">
+        <p className="text-[13px] text-ink-primary font-medium">Your follow-up sequence</p>
+        <p className="text-[12.5px] text-ink-secondary">
+          When an opportunity&apos;s follow-up comes due, this is what actually sends — no AI call, so it never depends on AI being available or affordable. Attempt 1 uses the first step below; every attempt after that repeats the last step.
+        </p>
+        <div className="space-y-2">
+          {steps.map((s, i) => (
+            <div key={s.id} className="flex flex-wrap items-center gap-2 border border-black/10 dark:border-white/10 rounded-lg p-3">
+              <Badge tone="neutral">Attempt {i + 1}{i === steps.length - 1 ? "+" : ""}</Badge>
+              <select
+                value={s.template.id}
+                onChange={(e) => persistSteps(updateStepLocal(s.id, { templateId: e.target.value }))}
+                className="rounded-lg border border-black/10 dark:border-white/15 bg-surface px-2.5 py-1.5 text-[12.5px] text-ink-primary flex-1 min-w-[160px]"
+              >
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[12px] text-ink-muted">then wait</span>
+              <div className="w-16">
+                <Input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={s.delayHours}
+                  onChange={(e) => updateStepLocal(s.id, { delayHours: Number(e.target.value) || 1 })}
+                  onBlur={() => persistSteps(steps)}
+                />
+              </div>
+              <span className="text-[12px] text-ink-muted">hours</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[13px] font-semibold text-ink-primary">Templates</p>
+          <Button size="sm" onClick={() => setEditing("new")}>
+            <Plus size={13} /> New template
+          </Button>
+        </div>
+        {error && <p className="text-[12.5px] text-status-critical mb-2">{error}</p>}
+        <div className="space-y-2">
+          {templates.map((t) => (
+            <div key={t.id} className="card p-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-medium text-ink-primary">{t.name}</p>
+                <p className="text-[12px] text-ink-muted mt-0.5 line-clamp-2">{t.messageBody}</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button size="sm" variant="ghost" onClick={() => setEditing(t)}>
+                  <Pencil size={13} />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => deleteTemplate(t.id)}>
+                  <Trash2 size={13} />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {editing && (
+        <TemplateEditorDialog
+          template={editing === "new" ? null : editing}
+          variables={variables}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TemplateEditorDialog({
+  template,
+  variables,
+  onClose,
+  onSaved,
+}: {
+  template: FollowUpTemplate | null;
+  variables: TemplateVariable[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(template?.name ?? "");
+  const [messageBody, setMessageBody] = useState(template?.messageBody ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (template) await api.patch(`/api/internal/followups/templates/${template.id}`, { name, messageBody });
+      else await api.post("/api/internal/followups/templates", { name, messageBody });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose} title={template ? "Edit template" : "New template"} description="This is a plain message, not an AI-generated one — it sends exactly as written.">
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <Label>Name</Label>
+          <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Second nudge" />
+        </div>
+        <div>
+          <Label>Message</Label>
+          <Textarea required rows={5} value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Hi {{contact_name}}, just checking in on {{objective}}..." />
+          <p className="text-[11.5px] text-ink-muted mt-1.5">
+            Variables: {variables.map((v) => `{{${v.key}}}`).join(", ")}
+          </p>
+        </div>
+        {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

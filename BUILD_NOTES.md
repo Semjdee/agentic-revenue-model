@@ -545,6 +545,79 @@ both new pages live in a real logged-in browser session
 `npm run demo-journey`, and `npm run demo-journey-phase2` all clean
 afterward.
 
+## 9h. Follow-up templates — tenant-owned, not AI-generated (2026-08-21)
+
+Audit request: does the follow-up engine have user-configurable workflow
+templates a tenant can set up themselves, deployed automatically on the
+follow-up due date, so routine re-engagement doesn't depend on an AI call
+succeeding? Answer at the time of asking: the scheduling/sending engine
+was real (§ below, unchanged), but what it sent was two message strings
+**hardcoded directly in `processor.ts`** — no template storage, no UI, no
+way for a tenant to change a word of it. `opportunities.follow_up_channel`
+and `follow_up_owner` were dead columns, never read or written anywhere.
+This entry is what replaced the hardcoded strings with a real,
+tenant-owned template library.
+
+**Scope decision** (asked directly, user chose): build the template
+library as a complete, real feature now; design the data model so a
+later full multi-step workflow builder (arbitrary step count, reordering,
+per-step channel, branch conditions) is a pure addition, not a migration.
+
+- **Schema** — `follow_up_templates` (tenant-owned name + message body,
+  supports `{{variables}}`), `follow_up_sequences` (a named, ordered
+  container — every tenant gets exactly one auto-created "Default
+  sequence"), `follow_up_sequence_steps` (ordered steps, each pointing at
+  a template with its own `delayHours`), and
+  `opportunities.follow_up_sequence_id` (nullable — null means "use my
+  tenant's default sequence"). A step's `templateId` is `onDelete:
+  "restrict"` — deleting a template still in use by a step is blocked at
+  the DB level, backed by a friendlier pre-check at the API layer.
+- **`modules/followups/templates.ts`** —
+  `ensureDefaultFollowUpSequence()` auto-creates a tenant's default
+  sequence + its 2 starter templates the first time anything asks for
+  it, reproducing the OLD hardcoded wording and 48h cadence exactly —
+  an untouched tenant's behavior doesn't change the moment this ships.
+  `renderFollowUpTemplate()` does `{{variable}}` interpolation
+  (`contact_name`, `objective`, `product`, `business_name`) with a
+  natural-reading fallback for a missing value (never leaves a raw
+  `{{var}}` in a sent message). `resolveStepForAttempt()` clamps to the
+  sequence's last step once attempts exceed its step count — the same
+  "any attempt after the first repeats message 2" behavior the old code
+  had, generalized to N steps.
+- **`processor.ts`** — the hardcoded ternary is gone. Each due follow-up
+  now resolves the opportunity's sequence (or the tenant's default),
+  picks the step for the current attempt number, and renders its
+  template with real contact/opportunity/tenant data. The reschedule
+  interval is now that step's own `delayHours`, not the old flat
+  `REPEAT_INTERVAL_HOURS` constant — a tenant with a 3-day-then-7-day
+  cadence in mind can actually build that now (by editing the 2 existing
+  steps' delays; adding a 3rd step is the workflow-builder pass this
+  schema is ready for but doesn't expose a UI for yet).
+- **UI** — new Settings → Follow-up Templates tab: a template
+  list (create/edit/delete, blocked with a clear message if a template
+  is still in use), and a "your follow-up sequence" panel showing each
+  attempt's template (dropdown) and delay (editable, saves on blur —
+  fixed a real per-keystroke-API-call bug caught before shipping, see
+  below).
+- **Real bug caught and fixed before shipping:** the first version of the
+  delay-hours input persisted to the API on every `onChange` — i.e. on
+  every keystroke while typing a 2-digit number. Fixed by splitting
+  local-state updates (immediate, for responsive typing) from the actual
+  API persist (only on blur for the number field; still immediate for
+  the template dropdown, which fires far less often).
+- **Verified live** against the real database: confirmed the
+  auto-seeded default sequence reproduces the old wording/48h cadence
+  exactly; confirmed `{{variable}}` interpolation and its fallback
+  behavior; assigned a custom template + a custom 24h delay to step 1 of
+  a real opportunity and ran `runFollowUpCheck()` end to end — the sent
+  message was the custom text (not the old hardcoded string), and the
+  opportunity's `nextFollowUpAt` reflected the custom 24h delay (not the
+  old flat 48h) — proof the engine is actually reading from the tenant's
+  templates now, not still secretly hardcoded. Confirmed the new API
+  routes return correct data live via a real logged-in session. `npm run
+  build`, `npm run demo-journey`, and `npm run demo-journey-phase2` all
+  clean afterward.
+
 ## 10. Pending / not yet implemented — team backlog
 
 These are known, deliberate simplifications, not accidental gaps — each

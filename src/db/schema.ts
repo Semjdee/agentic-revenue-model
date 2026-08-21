@@ -597,10 +597,91 @@ export const opportunities = pgTable(
     lastInteractionAt: ts("last_interaction_at"),
     followUpObjective: text("follow_up_objective"),
     lostReason: text("lost_reason"),
+    // Which tenant-owned follow-up sequence this opportunity's automated
+    // messages come from (see followUpSequences below) — null falls back
+    // to the tenant's default sequence, so every existing opportunity
+    // keeps working unchanged the moment this column ships (a real
+    // sequence/template already exists for every tenant by then, see
+    // ensureDefaultFollowUpSequence() in modules/followups/templates.ts).
+    followUpSequenceId: text("follow_up_sequence_id").references(() => followUpSequences.id, { onDelete: "set null" }),
     createdAt: ts("created_at").notNull().defaultNow(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => ({ tenantIdx: index("opportunities_tenant_idx").on(t.tenantId) })
+);
+
+// ---------------------------------------------------------------------------
+// FOLLOW-UP TEMPLATES & SEQUENCES — tenant-owned, replacing the two message
+// strings that used to be hardcoded directly in
+// modules/followups/processor.ts. Deliberately modeled as a sequence of
+// ordered steps (not just "template A, template B" fields on the engine)
+// even though this pass only ships a template LIBRARY + a single default
+// 2-step sequence per tenant, editable but not yet extendable to
+// arbitrary step counts from the UI — the schema is what makes a later
+// full workflow-builder pass (more steps, per-step channel, branching)
+// additive, not a migration. See docs/SPECIAL_AI_NOTES.md-style writeup
+// in BUILD_NOTES.md for the full reasoning.
+//
+// Honest scope note: a step's message always sends into the
+// opportunity's EXISTING conversation (same channel that conversation is
+// already on) — there is no real multi-channel dispatch capability in
+// this codebase (no email-sending integration exists anywhere), so
+// templates intentionally do NOT carry a "channel" field that would
+// imply one.
+// ---------------------------------------------------------------------------
+
+export const followUpTemplates = pgTable(
+  "follow_up_templates",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // Supports {{contact_name}}, {{objective}}, {{product}}, {{business_name}}
+    // — see renderFollowUpTemplate() in modules/followups/templates.ts for
+    // the full variable list and its graceful-fallback behavior for a
+    // missing value (never leaves a raw {{var}} in a sent message).
+    messageBody: text("message_body").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({ tenantIdx: index("follow_up_templates_tenant_idx").on(t.tenantId) })
+);
+
+export const followUpSequences = pgTable(
+  "follow_up_sequences",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({ tenantIdx: index("follow_up_sequences_tenant_idx").on(t.tenantId) })
+);
+
+export const followUpSequenceSteps = pgTable(
+  "follow_up_sequence_steps",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id").notNull().references(() => followUpSequences.id, { onDelete: "cascade" }),
+    stepOrder: integer("step_order").notNull(),
+    // restrict, not set null/cascade — a template in active use by a step
+    // must be reassigned before it can be deleted (enforced again at the
+    // API layer with a friendly error; this is the DB-level backstop).
+    templateId: text("template_id").notNull().references(() => followUpTemplates.id, { onDelete: "restrict" }),
+    // Hours from THIS step firing until the next step (or a repeat of
+    // this step, once it's the last one) fires — the direct replacement
+    // for processor.ts's old flat REPEAT_INTERVAL_HOURS constant.
+    delayHours: integer("delay_hours").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    sequenceIdx: index("follow_up_sequence_steps_sequence_idx").on(t.sequenceId),
+    uniqueOrder: uniqueIndex("follow_up_sequence_steps_order_unique").on(t.sequenceId, t.stepOrder),
+  })
 );
 
 export const tasks = pgTable("tasks", {

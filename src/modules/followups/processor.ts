@@ -3,8 +3,7 @@ import { generateId } from "@/lib/ids";
 import { and, eq, lte, isNotNull } from "drizzle-orm";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
 import { MAX_ATTEMPTS, openFollowUpConditions } from "./service";
-
-const REPEAT_INTERVAL_HOURS = 48;
+import { resolveOpportunitySequence, getSequenceSteps, resolveStepForAttempt, renderFollowUpTemplate } from "./templates";
 
 /**
  * Follow-up Engine tick (spec section 11).
@@ -14,7 +13,9 @@ const REPEAT_INTERVAL_HOURS = 48;
  * "Run follow-up check now" button in Settings do). For every opportunity
  * whose `nextFollowUpAt` has passed:
  *   - if still open (not WON/LOST) and AI follow-up is enabled and attempts
- *     remain, generate + send a follow-up message and reschedule
+ *     remain, send the message from the opportunity's follow-up sequence
+ *     (tenant-owned templates — see templates.ts — not AI-generated) and
+ *     reschedule using that step's own delay
  *   - otherwise, hand off to a human via a Task instead of auto-sending
  *   - stop entirely once WON, LOST, opted out, or max attempts reached
  */
@@ -50,10 +51,38 @@ export async function runFollowUpCheck(now: Date = new Date(), tenantId?: string
       continue;
     }
 
-    const message =
-      opp.followUpAttempts === 0
-        ? `Hi again! Just checking in on the ${opp.followUpObjective ?? "quotation"} we discussed — would you like to go ahead?`
-        : `Hi, following up once more on your request — happy to answer any questions before you decide.`;
+    // Tenant-owned template, not an AI-generated message — see
+    // modules/followups/templates.ts. Falls back to the tenant's
+    // auto-created default sequence (which reproduces the platform's
+    // original 2-message/48h behavior exactly) until a tenant edits it.
+    const sequence = await resolveOpportunitySequence(opp.tenantId, opp.followUpSequenceId);
+    const steps = await getSequenceSteps(sequence.id);
+    const step = resolveStepForAttempt(steps, opp.followUpAttempts);
+
+    if (!step) {
+      // A tenant deleted every template out of their sequence — nothing
+      // to send. Hand off rather than silently doing nothing or crashing.
+      await db.insert(schema.tasks).values({
+        id: generateId(),
+        tenantId: opp.tenantId,
+        opportunityId: opp.id,
+        title: `Follow up with customer (no follow-up templates configured) — ${opp.followUpObjective ?? ""}`,
+        type: "FOLLOW_UP",
+        dueAt: now,
+      });
+      await db.update(schema.opportunities).set({ nextFollowUpAt: null }).where(eq(schema.opportunities.id, opp.id));
+      results.push({ opportunityId: opp.id, action: "escalated_no_template" });
+      continue;
+    }
+
+    const [contact] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, opp.contactId)).limit(1);
+    const [tenant] = await db.select().from(schema.tenants).where(eq(schema.tenants.id, opp.tenantId)).limit(1);
+    const message = renderFollowUpTemplate(step.template.messageBody, {
+      contactName: contact?.name,
+      objective: opp.followUpObjective,
+      product: opp.products?.[0]?.name,
+      businessName: tenant?.name,
+    });
 
     await db.insert(schema.messages).values({
       id: generateId(),
@@ -75,7 +104,9 @@ export async function runFollowUpCheck(now: Date = new Date(), tenantId?: string
       .set({
         followUpAttempts: nextAttempts,
         lastInteractionAt: now,
-        nextFollowUpAt: stillHasAttempts ? new Date(now.getTime() + REPEAT_INTERVAL_HOURS * 3600 * 1000) : null,
+        // The step's own delay, not a flat global constant — the direct
+        // replacement for the old REPEAT_INTERVAL_HOURS.
+        nextFollowUpAt: stillHasAttempts ? new Date(now.getTime() + step.delayHours * 3600 * 1000) : null,
       })
       .where(eq(schema.opportunities.id, opp.id));
 
