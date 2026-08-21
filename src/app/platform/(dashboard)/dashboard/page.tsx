@@ -14,7 +14,9 @@ interface DashboardData {
     failedIntegrations: number;
     aiConversationsToday: number;
     mrrUsd: number | null;
-    proSubscriptions: number;
+    freeTenants: number;
+    proTenants: number;
+    premiumTenants: number;
     billingTracked: boolean;
   };
   funnel: Record<string, number>;
@@ -29,6 +31,8 @@ interface DashboardData {
   }[];
 }
 
+const PLAN_OPTIONS = ["FREE", "PRO", "PREMIUM"] as const;
+
 const FUNNEL_LABELS: Record<string, string> = {
   ACCOUNT: "Account created",
   BUSINESS_PROFILE: "Business profile",
@@ -42,10 +46,24 @@ const FUNNEL_LABELS: Record<string, string> = {
 
 export default function PlatformDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [savingPlanFor, setSavingPlanFor] = useState<string | null>(null);
 
+  async function load() {
+    setData(await api.get<DashboardData>("/api/platform/dashboard"));
+  }
   useEffect(() => {
-    api.get<DashboardData>("/api/platform/dashboard").then(setData);
+    load();
   }, []);
+
+  async function setPlan(tenantId: string, plan: string) {
+    setSavingPlanFor(tenantId);
+    try {
+      await api.patch(`/api/platform/tenants/${tenantId}/plan`, { plan });
+      await load();
+    } finally {
+      setSavingPlanFor(null);
+    }
+  }
 
   if (!data) return <p className="text-[13px] text-white/50">Loading…</p>;
   const { stats } = data;
@@ -67,8 +85,10 @@ export default function PlatformDashboardPage() {
         <Tile label="AI provider cost" value={`$${stats.aiProviderCostUsd.toFixed(2)}`} />
         <Tile label="Tenants approaching limits" value={stats.tenantsApproachingLimits.toLocaleString()} tone={stats.tenantsApproachingLimits > 0 ? "warning" : undefined} />
         <Tile label="Failed integrations" value={stats.failedIntegrations.toLocaleString()} tone={stats.failedIntegrations > 0 ? "critical" : undefined} />
-        <Tile label="Pro subscriptions" value={stats.proSubscriptions.toLocaleString()} caption={!stats.billingTracked ? "no recurring billing wired up yet" : undefined} />
-        <Tile label="MRR" value={stats.mrrUsd === null ? "—" : `$${stats.mrrUsd.toFixed(2)}`} caption={!stats.billingTracked ? "no recurring billing wired up yet" : undefined} />
+        <Tile label="Free tenants" value={stats.freeTenants.toLocaleString()} />
+        <Tile label="Pro tenants" value={stats.proTenants.toLocaleString()} />
+        <Tile label="Premium tenants" value={stats.premiumTenants.toLocaleString()} />
+        <Tile label="MRR" value={stats.mrrUsd === null ? "—" : `$${stats.mrrUsd.toFixed(2)}`} caption={!stats.billingTracked ? "no recurring subscription billing wired up yet" : undefined} />
       </div>
 
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -106,7 +126,20 @@ export default function PlatformDashboardPage() {
               {data.tenants.map((t) => (
                 <tr key={t.id} className="border-b border-white/5">
                   <td className="px-4 py-2 text-white font-medium">{t.name}</td>
-                  <td className="px-4 py-2 text-white/70">{t.plan}</td>
+                  <td className="px-4 py-2">
+                    <select
+                      value={t.plan}
+                      disabled={savingPlanFor === t.id}
+                      onChange={(e) => setPlan(t.id, e.target.value)}
+                      className="bg-white/[0.06] border border-white/15 rounded-md text-white/80 text-[12px] px-1.5 py-1"
+                    >
+                      {PLAN_OPTIONS.map((p) => (
+                        <option key={p} value={p} className="text-black">
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td className={`px-4 py-2 tabular-nums ${t.creditBalance <= 100 ? "text-amber-400" : "text-white/70"}`}>{t.creditBalance.toLocaleString()}</td>
                   <td className="px-4 py-2 text-white/70">{t.onboardingStep ? FUNNEL_LABELS[t.onboardingStep] ?? t.onboardingStep : "—"}</td>
                   <td className="px-4 py-2">{t.wentLive ? <span className="text-emerald-400">Yes</span> : <span className="text-white/40">No</span>}</td>

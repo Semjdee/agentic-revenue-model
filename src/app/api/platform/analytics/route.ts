@@ -5,6 +5,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { computeCohortRetention } from "@/modules/platform/cohorts";
 import { computePlatformTenantForecastSummary } from "@/modules/billing/forecast";
 import { approxCreditsFromCost } from "@/modules/billing/pricing";
+import { computeAiEconomics } from "@/modules/platform/ai-economics";
 
 // Deep platform-admin analytics, deliberately a separate route/page from
 // the basic KPI dashboard (/api/platform/dashboard) rather than folded
@@ -68,11 +69,16 @@ export async function GET() {
     .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
     .slice(0, 25);
 
-  const [cohorts, forecastSummary, tenantRowsForNames] = await Promise.all([computeCohortRetention(), computePlatformTenantForecastSummary(), db.select().from(schema.tenants)]);
+  const [cohorts, forecastSummary, tenantRowsForNames, aiEconomics] = await Promise.all([
+    computeCohortRetention(),
+    computePlatformTenantForecastSummary(),
+    db.select().from(schema.tenants),
+    computeAiEconomics(30),
+  ]);
   const nameByTenantId = new Map(tenantRowsForNames.map((t) => [t.id, t.name]));
   const tenantForecasts = forecastSummary
     .map((f) => ({ ...f, tenantName: nameByTenantId.get(f.tenantId) ?? "Unknown tenant" }))
     .sort((a, b) => b.projectedMonthlyCredits - a.projectedMonthlyCredits);
 
-  return jsonOk({ topAgentsByCost, cohorts, tenantForecasts });
+  return jsonOk({ topAgentsByCost, cohorts, tenantForecasts, aiEconomics });
 }

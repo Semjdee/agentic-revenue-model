@@ -3,13 +3,14 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { logAudit } from "@/lib/audit";
 import { PAID_TOPUP_CREDITS, PAID_TOPUP_PRICE_USD } from "@/modules/billing/pricing";
 
-// Deliberately does NOT grant credits. No real payment processor is
-// connected yet (docs/ONBOARDING_TASKS.md P1 backlog — billing/subscription
-// self-service) — crediting an account as if $20 had been paid when it
-// hadn't would be fabricating a financial transaction, not a labelled
-// DEMO/MOCK the way WhatsApp/Instagram/CRM connections are. This records
-// the request honestly so the business can follow up manually until real
-// checkout (Stripe or similar) is wired to this same button.
+// Superseded by /api/internal/billing/topup/initiate (real Flutterwave
+// mobile-money purchases — modules/billing/topup.ts), which the Settings
+// → Credits & Usage "Add Credits" dialog uses now. Left in place, unused
+// by the current UI, only as a manual fallback path (audit-log the
+// request, follow up outside the platform) if the real payment flow is
+// ever unavailable — deliberately still does NOT grant credits itself,
+// same reasoning as before: crediting an account as if payment had
+// happened without it would be fabricating a financial transaction.
 export async function POST() {
   const session = await getSession();
   if (!session) return jsonError("Not authenticated", 401);

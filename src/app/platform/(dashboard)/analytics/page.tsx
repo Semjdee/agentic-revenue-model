@@ -28,14 +28,40 @@ interface TenantForecastRow {
   monthlyAllotment: number;
   overAllotment: boolean;
 }
+interface HighCostRun {
+  runId: string;
+  tenantName: string;
+  agentName: string;
+  costUsd: number;
+  startedAt: string;
+}
+interface AiEconomics {
+  costPercentilesUsd: { p50: number; p90: number; p95: number; p99: number; avg: number };
+  costPerLeadUsd: number | null;
+  costPerQualifiedLeadUsd: number | null;
+  costPerSaleUsd: number | null;
+  creditsSold: number;
+  creditRevenueUsd: number;
+  realizedGrossMarginPct: number | null;
+  providerFailures: number;
+  loopStops: number;
+  timeouts: number;
+  highCostRuns: HighCostRun[];
+  firstPurchaseConversionPct: number;
+  repeatPurchaseRatePct: number;
+}
 interface AnalyticsData {
   topAgentsByCost: AgentCostRow[];
   cohorts: CohortRow[];
   tenantForecasts: TenantForecastRow[];
+  aiEconomics: AiEconomics;
 }
 
 function fmtUsd(n: number) {
   return "$" + n.toFixed(4);
+}
+function fmtUsd2(n: number) {
+  return "$" + n.toFixed(2);
 }
 
 export default function PlatformAnalyticsPage() {
@@ -51,8 +77,57 @@ export default function PlatformAnalyticsPage() {
     <div className="space-y-8 max-w-6xl">
       <div>
         <h1 className="text-[18px] font-semibold text-white">Deep Analytics</h1>
-        <p className="text-[12.5px] text-white/50 mt-0.5">Per-agent cost breakdown, cohort retention, and per-tenant usage forecasts — all from real usage data.</p>
+        <p className="text-[12.5px] text-white/50 mt-0.5">AI economics, per-agent cost breakdown, cohort retention, and per-tenant usage forecasts — all from real usage data. Raw provider/model/token/cost detail — tenants never see this (Master Product Architecture Update §29-31).</p>
       </div>
+
+      <section>
+        <h2 className="text-[14px] font-semibold text-white mb-1">AI economics (last 30 days)</h2>
+        <p className="text-[11.5px] text-white/40 mb-3">Credits sold/revenue/margin are all-time (real Flutterwave purchases only) — genuinely 0 until the first real top-up completes, not invented.</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <EconStat label="P50 run cost" value={fmtUsd(data.aiEconomics.costPercentilesUsd.p50)} />
+          <EconStat label="P90 run cost" value={fmtUsd(data.aiEconomics.costPercentilesUsd.p90)} />
+          <EconStat label="P95 run cost" value={fmtUsd(data.aiEconomics.costPercentilesUsd.p95)} />
+          <EconStat label="P99 run cost" value={fmtUsd(data.aiEconomics.costPercentilesUsd.p99)} />
+          <EconStat label="Cost / lead" value={data.aiEconomics.costPerLeadUsd === null ? "—" : fmtUsd2(data.aiEconomics.costPerLeadUsd)} />
+          <EconStat label="Cost / qualified lead" value={data.aiEconomics.costPerQualifiedLeadUsd === null ? "—" : fmtUsd2(data.aiEconomics.costPerQualifiedLeadUsd)} />
+          <EconStat label="Cost / sale" value={data.aiEconomics.costPerSaleUsd === null ? "—" : fmtUsd2(data.aiEconomics.costPerSaleUsd)} />
+          <EconStat label="Provider failures" value={data.aiEconomics.providerFailures.toLocaleString()} warn={data.aiEconomics.providerFailures > 0} />
+          <EconStat label="Loop/limit stops" value={data.aiEconomics.loopStops.toLocaleString()} warn={data.aiEconomics.loopStops > 0} />
+          <EconStat label="Timeouts" value={data.aiEconomics.timeouts.toLocaleString()} warn={data.aiEconomics.timeouts > 0} />
+          <EconStat label="Credits sold (all-time)" value={data.aiEconomics.creditsSold.toLocaleString()} />
+          <EconStat label="Credit revenue (all-time)" value={fmtUsd2(data.aiEconomics.creditRevenueUsd)} />
+          <EconStat label="Realized gross margin" value={data.aiEconomics.realizedGrossMarginPct === null ? "No purchases yet" : `${data.aiEconomics.realizedGrossMarginPct.toFixed(1)}%`} />
+          <EconStat label="First-purchase conversion" value={`${data.aiEconomics.firstPurchaseConversionPct.toFixed(1)}%`} />
+          <EconStat label="Repeat-purchase rate" value={`${data.aiEconomics.repeatPurchaseRatePct.toFixed(1)}%`} />
+        </div>
+        {data.aiEconomics.highCostRuns.length > 0 && (
+          <div>
+            <p className="text-[11px] text-white/40 uppercase tracking-wide mb-1.5">Highest-cost individual runs</p>
+            <div className="border border-white/10 rounded-lg overflow-hidden">
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-white/10 text-left text-white/40 text-[11px] uppercase tracking-wide">
+                    <th className="px-4 py-2 font-medium">Tenant</th>
+                    <th className="px-4 py-2 font-medium">Agent</th>
+                    <th className="px-4 py-2 font-medium text-right">Cost</th>
+                    <th className="px-4 py-2 font-medium text-right">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.aiEconomics.highCostRuns.map((r) => (
+                    <tr key={r.runId} className="border-b border-white/[0.05]">
+                      <td className="px-4 py-2 text-white">{r.tenantName}</td>
+                      <td className="px-4 py-2 text-white/60">{r.agentName}</td>
+                      <td className="px-4 py-2 text-white/80 text-right tabular-nums">{fmtUsd(r.costUsd)}</td>
+                      <td className="px-4 py-2 text-white/40 text-right">{new Date(r.startedAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section>
         <h2 className="text-[14px] font-semibold text-white mb-1">Per-agent cost leaders (last 30 days)</h2>
@@ -176,6 +251,15 @@ export default function PlatformAnalyticsPage() {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function EconStat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className={clsx("border rounded-lg p-3", warn ? "border-amber-500/30 bg-amber-500/[0.04]" : "border-white/10 bg-white/[0.02]")}>
+      <p className="text-[10px] text-white/40 uppercase tracking-wide">{label}</p>
+      <p className={clsx("text-[15px] font-semibold mt-0.5 tabular-nums", warn ? "text-amber-300" : "text-white")}>{value}</p>
     </div>
   );
 }

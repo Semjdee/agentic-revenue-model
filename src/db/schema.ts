@@ -1275,13 +1275,23 @@ export const agentTestFeedback = pgTable(
 // 26. AI USAGE CREDITS & METERING (src/modules/billing/)
 //
 // Every AI-generated reply costs real money (Anthropic API tokens). This is
-// the ledger that meters it, enforces free/paid tier limits, and protects
-// margin — see src/modules/billing/pricing.ts for the real $/token math this
-// is built on. Deliberately NOT a payment-processor integration: this tracks
-// and enforces usage; collecting real money for a top-up needs a real Stripe
-// (or similar) integration this schema doesn't assume or fake.
+// the ledger that meters it, enforces per-plan limits, and protects margin —
+// see src/modules/billing/pricing.ts for the real $/token math this is built
+// on. Real payment collection for a top-up is a Flutterwave integration
+// (src/integrations/payments/flutterwave.ts) — this table tracks and
+// enforces usage regardless of provider, it doesn't assume one.
+//
+// Subscription plan, separate from AI credits (Master Product Architecture
+// Update §3/§43): a tenant's plan gates FEATURE access (see
+// modules/entitlements/service.ts) while credits gate AI CONSUMPTION —
+// deliberately two different commercial levers, never conflated. Was a
+// binary FREE/PAID until this 3-tier model — the only 4 call sites reading
+// the old "PAID" value (settings/page.tsx, reserve-policy.ts,
+// platform/dashboard/route.ts) were updated in the same change; no other
+// code depended on it.
 // ---------------------------------------------------------------------------
-export const CREDIT_PLANS = ["FREE", "PAID"] as const;
+export const CREDIT_PLANS = ["FREE", "PRO", "PREMIUM"] as const;
+export type CreditPlan = (typeof CREDIT_PLANS)[number];
 
 export const creditBalances = pgTable("credit_balances", {
   id: id(),
@@ -1325,6 +1335,31 @@ export const creditLedger = pgTable(
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => ({ tenantIdx: index("credit_ledger_tenant_idx").on(t.tenantId) })
+);
+
+// Bridges a Flutterwave charge back to "which tenant, which package" once
+// the webhook fires with only a chargeId/reference — and is the
+// idempotency guard against a webhook firing more than once for the same
+// payment (Flutterwave's own docs note retries are possible; credits must
+// grant exactly once per real payment). `reference` is what we generate
+// and hand to Flutterwave at initiation; `chargeId` is theirs, filled in
+// once initiateCharge() returns.
+export const CREDIT_PURCHASE_INTENT_STATUSES = ["PENDING", "SUCCEEDED", "FAILED"] as const;
+export const creditPurchaseIntents = pgTable(
+  "credit_purchase_intents",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    reference: text("reference").notNull().unique(),
+    chargeId: text("charge_id"),
+    packageId: text("package_id").notNull(),
+    priceUsd: numeric("price_usd").notNull(),
+    credits: integer("credits").notNull(),
+    status: text("status").$type<(typeof CREDIT_PURCHASE_INTENT_STATUSES)[number]>().notNull().default("PENDING"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    completedAt: ts("completed_at"),
+  },
+  (t) => ({ tenantIdx: index("credit_purchase_intents_tenant_idx").on(t.tenantId), chargeIdx: index("credit_purchase_intents_charge_idx").on(t.chargeId) })
 );
 
 // ---------------------------------------------------------------------------

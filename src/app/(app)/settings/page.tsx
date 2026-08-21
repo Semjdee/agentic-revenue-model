@@ -58,8 +58,8 @@ export default function SettingsPage() {
             <Tabs.Trigger value="credits" className={TAB_CLASS}>
               Credits &amp; Usage
             </Tabs.Trigger>
-            <Tabs.Trigger value="ai-runs" className={TAB_CLASS}>
-              AI Runs
+            <Tabs.Trigger value="ai-activity" className={TAB_CLASS}>
+              AI Activity
             </Tabs.Trigger>
           </Tabs.List>
 
@@ -81,8 +81,8 @@ export default function SettingsPage() {
           <Tabs.Content value="credits" className="max-w-xl">
             <CreditsTab />
           </Tabs.Content>
-          <Tabs.Content value="ai-runs">
-            <AIRunsTab />
+          <Tabs.Content value="ai-activity">
+            <AIActivityTab />
           </Tabs.Content>
         </Tabs.Root>
       </div>
@@ -491,11 +491,6 @@ interface CreditLedgerRow {
   type: string;
   credits: number;
   balanceAfter: number;
-  model: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  costUsd: string | null;
-  reason: string;
   createdAt: string;
 }
 
@@ -504,6 +499,13 @@ interface CreditsResponse {
   plan: string;
   recent: CreditLedgerRow[];
   pricing: { freeTierGrant: number; paidTopupCredits: number; paidTopupPriceUsd: number };
+}
+
+interface CreditPackageOption {
+  id: string;
+  priceUsd: number;
+  credits: number;
+  custom: boolean;
 }
 
 interface AgentCostRow {
@@ -525,12 +527,118 @@ interface UsageForecast {
   reserveStatus: { tier: string; ok: boolean; reason?: string };
 }
 
+// Real Flutterwave mobile-money top-up (Master Product Architecture
+// Update §26, §39) — modules/billing/topup.ts. Never shows provider cost,
+// markup, or margin — just the price and the credits it buys, exactly
+// the doc's own "Add AI Credits" example.
+function AddCreditsDialog({ onClose }: { onClose: () => void }) {
+  const [packages, setPackages] = useState<CreditPackageOption[]>([]);
+  const [customMinUsd, setCustomMinUsd] = useState(15);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [customAmount, setCustomAmount] = useState("");
+  const [network, setNetwork] = useState<"MTN" | "AIRTEL">("MTN");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ packages: CreditPackageOption[]; customMinUsd: number }>("/api/internal/billing/packages").then((res) => {
+      setPackages(res.packages);
+      setCustomMinUsd(res.customMinUsd);
+      setSelected(res.packages.find((p) => !p.custom)?.id ?? null);
+    });
+  }, []);
+
+  const customPkg = packages.find((p) => p.custom);
+  const isCustom = selected === "custom";
+  const customCredits = customPkg && customAmount ? Math.round((Number(customAmount) / customPkg.priceUsd) * customPkg.credits) : 0;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (!selected) throw new Error("Choose an amount.");
+      if (!phoneNumber.trim()) throw new Error("Enter your mobile money phone number.");
+      const body: Record<string, unknown> = { packageId: selected, mobileMoneyNetwork: network, phoneNumber: phoneNumber.trim() };
+      if (isCustom) {
+        const amount = Number(customAmount);
+        if (!amount || amount < customMinUsd) throw new Error(`Custom amount must be at least $${customMinUsd}.`);
+        body.customAmountUsd = amount;
+      }
+      const res = await api.post<{ redirectUrl: string | null; isMock: boolean }>("/api/internal/billing/topup/initiate", body);
+      if (res.redirectUrl) {
+        window.location.href = res.redirectUrl;
+      } else {
+        setError("Payment started — check your phone to approve it, then refresh this page once complete.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start payment");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose} title="Add AI Credits" description="Choose an amount. Paid via mobile money.">
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          {packages.map((p) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => setSelected(p.id)}
+              className={clsx(
+                "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                selected === p.id ? "border-brand-500 bg-brand-500/5" : "border-black/10 dark:border-white/15"
+              )}
+            >
+              <p className="text-[13.5px] font-semibold text-ink-primary">{p.custom ? `Custom $${customMinUsd}+` : `$${p.priceUsd}`}</p>
+              {!p.custom && <p className="text-[11.5px] text-ink-muted">{p.credits.toLocaleString()} credits</p>}
+            </button>
+          ))}
+        </div>
+        {isCustom && (
+          <div>
+            <Label>Amount (USD)</Label>
+            <Input type="number" min={customMinUsd} step="1" value={customAmount} onChange={(e) => setCustomAmount(e.target.value)} placeholder={String(customMinUsd)} />
+            {customCredits > 0 && <p className="text-[11.5px] text-ink-muted mt-1">You receive: {customCredits.toLocaleString()} AI Credits</p>}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Mobile money network</Label>
+            <select value={network} onChange={(e) => setNetwork(e.target.value as "MTN" | "AIRTEL")} className="w-full rounded-lg border border-black/10 dark:border-white/15 bg-surface px-3 py-2 text-[13.5px] text-ink-primary">
+              <option value="MTN">MTN Mobile Money</option>
+              <option value="AIRTEL">Airtel Money</option>
+            </select>
+          </div>
+          <div>
+            <Label>Phone number</Label>
+            <Input required value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="7XXXXXXXX" />
+          </div>
+        </div>
+        {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitting || !selected}>
+            {submitting ? "Starting…" : "Continue"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 // Usage forecast & reserve — modules/billing/forecast.ts +
 // reserve-policy.ts. Every number here is real trailing usage, never a
 // plan-based guess; "insufficient data yet" is shown honestly rather
 // than a number extrapolated from one or two days of activity.
 function UsageForecastCard() {
   const [forecast, setForecast] = useState<UsageForecast | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     api.get<UsageForecast>("/api/internal/billing/forecast").then(setForecast);
@@ -539,30 +647,44 @@ function UsageForecastCard() {
   if (!forecast) return null;
 
   const inReserve = forecast.currentBalance <= forecast.reserveThreshold;
+  // "If enough historical data exists... Never show absurd calculations
+  // such as '6993 days remaining.'" (Master Product Architecture Update
+  // §32) — cap the displayed runway rather than show a huge number a
+  // near-empty daily average produces.
+  const runwayDisplay = forecast.daysOfRunway === null ? "Not enough usage yet to estimate." : forecast.daysOfRunway > 365 ? "365+ days" : `${forecast.daysOfRunway} days`;
 
   return (
     <div className="card p-4 space-y-3">
-      <p className="text-[12.5px] font-semibold text-ink-primary">Usage forecast &amp; reserve</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label="Avg / day (7d)" value={forecast.avgDailyCredits7d.toLocaleString()} />
-        <Stat label="Projected this month" value={forecast.projectedMonthlyCredits === null ? "Not enough data yet" : forecast.projectedMonthlyCredits.toLocaleString()} />
-        <Stat label="Days of runway" value={forecast.daysOfRunway === null ? "—" : `${forecast.daysOfRunway}d`} />
-        <Stat label="Reserved for live chats" value={forecast.reserveThreshold.toLocaleString()} />
+      <div className="flex items-center justify-between">
+        <p className="text-[12.5px] font-semibold text-ink-primary">Live Conversation Protection</p>
+        <Badge tone="good">ON</Badge>
       </div>
-      <p className="text-[11.5px] text-ink-muted">
-        {inReserve
-          ? "Your balance has dropped into the reserve that protects live customer conversations — those keep working regardless; agent-testing pauses until you top up."
-          : "Live customer conversations are always kept working first. A reserve is held back so a busy testing session in the agent builder can never take those down — see the Special AI Notes in the build docs for the full policy."}
-      </p>
+      <p className="text-[11.5px] text-ink-muted">We keep part of your available AI capacity protected for real customer conversations — those always keep working, even if your balance runs low.</p>
+      {inReserve && (
+        <p className="text-[11.5px] text-status-critical">Your balance has dropped into that protected range — agent-testing pauses until you top up, but live customer conversations are unaffected.</p>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <Stat label="Estimated remaining use" value={runwayDisplay} />
+        <Stat label="Projected this month" value={forecast.projectedMonthlyCredits === null ? "Not enough data yet" : `${forecast.projectedMonthlyCredits.toLocaleString()} credits`} />
+      </div>
+      <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-[11px] text-ink-muted underline decoration-dotted">
+        {showAdvanced ? "Hide" : "Show"} advanced details
+      </button>
+      {showAdvanced && (
+        <div className="grid grid-cols-2 gap-3 pt-1 border-t border-black/[0.06] dark:border-white/10">
+          <Stat label="Avg credits / day (7d)" value={forecast.avgDailyCredits7d.toLocaleString()} />
+          <Stat label="Reserved for live chats" value={forecast.reserveThreshold.toLocaleString()} />
+        </div>
+      )}
       {forecast.byAgent.length > 0 && (
         <div>
-          <p className="text-[11px] text-ink-muted uppercase tracking-wide mb-1.5">Cost by agent (last 30 days)</p>
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide mb-1.5">Usage by agent (last 30 days)</p>
           <div className="space-y-1">
             {forecast.byAgent.map((a) => (
               <div key={a.agentId ?? "unassigned"} className="flex items-center justify-between text-[12px]">
                 <span className="text-ink-secondary truncate">{a.agentName}</span>
                 <span className="text-ink-muted tabular-nums shrink-0 ml-2">
-                  {a.runs} run{a.runs === 1 ? "" : "s"} · ~{a.approxCredits.toLocaleString()} credits
+                  {a.approxCredits.toLocaleString()} credits
                 </span>
               </div>
             ))}
@@ -583,11 +705,12 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 // AI usage credits — src/modules/billing/. Every row here is a real
-// metered charge (or a real grant), never a placeholder number.
+// metered charge (or a real grant), never a placeholder number. No raw
+// model/token/cost fields shown here — that moved to Platform Admin (see
+// AIActivityTab's header comment); "Credits used" is all a tenant sees.
 function CreditsTab() {
   const [data, setData] = useState<CreditsResponse | null>(null);
-  const [requesting, setRequesting] = useState(false);
-  const [requestMsg, setRequestMsg] = useState<string | null>(null);
+  const [addCreditsOpen, setAddCreditsOpen] = useState(false);
 
   async function load() {
     setData(await api.get<CreditsResponse>("/api/internal/billing/credits"));
@@ -595,17 +718,6 @@ function CreditsTab() {
   useEffect(() => {
     load();
   }, []);
-
-  async function requestTopup() {
-    setRequesting(true);
-    setRequestMsg(null);
-    try {
-      const res = await api.post<{ message: string }>("/api/internal/billing/request-topup");
-      setRequestMsg(res.message);
-    } finally {
-      setRequesting(false);
-    }
-  }
 
   if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
 
@@ -615,18 +727,14 @@ function CreditsTab() {
     <div className="space-y-4">
       <div className="card p-4 flex items-center justify-between">
         <div>
-          <p className="text-[11px] text-ink-muted uppercase tracking-wide">Balance</p>
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide">AI Credits</p>
           <p className="text-[22px] font-semibold text-ink-primary mt-0.5">
-            {data.balance.toLocaleString()} <span className="text-[13px] font-normal text-ink-muted">credits</span>
+            {data.balance.toLocaleString()} <span className="text-[13px] font-normal text-ink-muted">credits remaining</span>
           </p>
-          <Badge tone={data.plan === "PAID" ? "brand" : "neutral"}>{data.plan === "PAID" ? "Paid" : "Free tier"}</Badge>
+          <Badge tone={data.plan === "FREE" ? "neutral" : "brand"}>{data.plan === "FREE" ? "Free" : data.plan === "PRO" ? "Pro" : "Premium"}</Badge>
+          <p className="text-[12px] text-ink-muted mt-2 max-w-xs">Credits power AI conversations, analysis, and AI actions.</p>
         </div>
-        <div className="text-right">
-          <Button onClick={requestTopup} disabled={requesting}>
-            {requesting ? "Requesting…" : `Buy ${data.pricing.paidTopupCredits.toLocaleString()} credits — $${data.pricing.paidTopupPriceUsd}`}
-          </Button>
-          {requestMsg && <p className="text-[11.5px] text-ink-muted mt-1.5 max-w-[220px]">{requestMsg}</p>}
-        </div>
+        <Button onClick={() => setAddCreditsOpen(true)}>Add Credits</Button>
       </div>
       {low && (
         <div className="rounded-lg border border-status-critical/30 bg-status-critical/5 px-4 py-2.5 text-[12.5px] text-status-critical">
@@ -642,7 +750,6 @@ function CreditsTab() {
               <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
                 <th className="px-4 py-2.5 font-medium">Type</th>
                 <th className="px-4 py-2.5 font-medium">Credits</th>
-                <th className="px-4 py-2.5 font-medium">Model</th>
                 <th className="px-4 py-2.5 font-medium">When</th>
               </tr>
             </thead>
@@ -654,7 +761,6 @@ function CreditsTab() {
                     {r.credits > 0 ? "+" : ""}
                     {r.credits}
                   </td>
-                  <td className="px-4 py-2.5 text-ink-secondary">{r.model ?? "—"}</td>
                   <td className="px-4 py-2.5 text-ink-muted">{new Date(r.createdAt).toLocaleString()}</td>
                 </tr>
               ))}
@@ -663,108 +769,66 @@ function CreditsTab() {
           {data.recent.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No activity yet.</p>}
         </div>
       </div>
+      {addCreditsOpen && <AddCreditsDialog onClose={() => setAddCreditsOpen(false)} />}
     </div>
   );
 }
 
-interface AgentRunRow {
+interface AIActivityRow {
   id: string;
-  triggerType: string;
+  title: string;
   status: string;
-  modelCalls: number;
-  toolCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCostUsd: string;
-  stopReason: string | null;
-  startedAt: string;
+  isFailure: boolean;
+  credits: number;
+  when: string;
 }
-interface AIRunsResponse {
-  recent: AgentRunRow[];
-  stats: {
-    totalRuns: number;
-    completed: number;
-    stoppedLimit: number;
-    stoppedLoop: number;
-    timedOut: number;
-    failed: number;
-    totalCostUsd: string;
-    avgToolCalls: string;
-  };
+interface AIActivityResponse {
+  activity: AIActivityRow[];
+  summary: { totalCreditsUsed: number; conversationCount: number; actionCount: number };
 }
 
-const RUN_STATUS_TONE: Record<string, "good" | "warning" | "critical" | "neutral" | "brand"> = {
-  COMPLETED: "good",
-  RUNNING: "brand",
-  STOPPED_LIMIT: "warning",
-  STOPPED_LOOP: "warning",
-  TIMED_OUT: "critical",
-  FAILED: "critical",
-  CANCELLED: "neutral",
-};
-
-// AIExecutionGateway observability (multi-agent-routing spec Part B
-// §39-40) — every AgentRun src/modules/ai/execution-gateway.ts produces,
-// so a business owner can see at a glance whether their AI is behaving:
-// what it's costing, and whether any runs got cut off for looping or
-// hitting a limit rather than genuinely completing.
-function AIRunsTab() {
-  const [data, setData] = useState<AIRunsResponse | null>(null);
+// Business-readable AI activity (Master Product Architecture Update
+// §29-31) — backed by /api/internal/billing/ai-activity, which translates
+// the same underlying AgentRun data the old raw "AI Runs" tab showed
+// (model names, token counts, $ cost, stop reasons) into plain language
+// and credits. The raw detail didn't go away — it moved to Platform Admin
+// (/api/platform/tenants/[id]/ai-runs), which is the only place that data
+// is meant to be visible per the doc's explicit rule.
+function AIActivityTab() {
+  const [data, setData] = useState<AIActivityResponse | null>(null);
 
   useEffect(() => {
-    api.get<AIRunsResponse>("/api/internal/ai/runs").then(setData);
+    api.get<AIActivityResponse>("/api/internal/billing/ai-activity").then(setData);
   }, []);
 
   if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
-  const { stats } = data;
-  const guardedRuns = stats.stoppedLimit + stats.stoppedLoop + stats.timedOut;
+  const { summary } = data;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatChip label="Total runs" value={stats.totalRuns.toLocaleString()} />
-        <StatChip label="Est. AI spend" value={`$${Number(stats.totalCostUsd).toFixed(4)}`} />
-        <StatChip label="Avg tool calls / run" value={Number(stats.avgToolCalls).toFixed(1)} />
-        <StatChip label="Guarded (limit/loop/timeout)" value={guardedRuns.toLocaleString()} tone={guardedRuns > 0 ? "warning" : undefined} />
+      <div className="grid grid-cols-3 gap-3">
+        <StatChip label="AI Conversations" value={summary.conversationCount.toLocaleString()} />
+        <StatChip label="AI Actions" value={summary.actionCount.toLocaleString()} />
+        <StatChip label="Credits Used" value={summary.totalCreditsUsed.toLocaleString()} />
       </div>
-      <p className="text-[11.5px] text-ink-muted">
-        Every AI reply is bounded by the AIExecutionGateway — hard, backend-enforced caps on tool calls, tokens, cost, and time per run, so a
-        misbehaving conversation can&apos;t run up unbounded cost. &quot;Guarded&quot; runs are ones those caps actually stepped in on.
-      </p>
       <div>
-        <p className="text-[12.5px] text-ink-secondary mb-2">Recent runs</p>
-        <div className="card overflow-hidden overflow-x-auto">
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
-                <th className="px-4 py-2.5 font-medium">Trigger</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium">Tool calls</th>
-                <th className="px-4 py-2.5 font-medium">Tokens</th>
-                <th className="px-4 py-2.5 font-medium">Cost</th>
-                <th className="px-4 py-2.5 font-medium">Stop reason</th>
-                <th className="px-4 py-2.5 font-medium">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.recent.map((r) => (
-                <tr key={r.id} className="border-b border-black/[0.05] dark:border-white/[0.05]">
-                  <td className="px-4 py-2.5 text-ink-secondary">{r.triggerType}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={RUN_STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>
-                  </td>
-                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">{r.toolCalls}</td>
-                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">{(r.inputTokens + r.outputTokens).toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-ink-secondary tabular-nums">${Number(r.estimatedCostUsd).toFixed(4)}</td>
-                  <td className="px-4 py-2.5 text-ink-muted truncate max-w-[220px]" title={r.stopReason ?? undefined}>
-                    {r.stopReason ?? "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-ink-muted">{new Date(r.startedAt).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {data.recent.length === 0 && <p className="text-[12.5px] text-ink-muted p-4">No AI runs yet.</p>}
+        <p className="text-[12.5px] text-ink-secondary mb-2">Recent activity</p>
+        <div className="card overflow-hidden">
+          {data.activity.length === 0 ? (
+            <p className="text-[12.5px] text-ink-muted p-4">No AI activity yet.</p>
+          ) : (
+            data.activity.map((a) => (
+              <div key={a.id} className="flex items-center justify-between px-4 py-2.5 border-b border-black/[0.05] dark:border-white/[0.05] last:border-0">
+                <div>
+                  <p className="text-[13px] text-ink-primary font-medium">{a.title}</p>
+                  <p className="text-[11.5px] text-ink-muted">
+                    {a.status} · {new Date(a.when).toLocaleString()}
+                  </p>
+                </div>
+                {a.isFailure ? <Badge tone="critical">0 credits charged</Badge> : <Badge tone="neutral">{a.credits} credit{a.credits === 1 ? "" : "s"} used</Badge>}
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

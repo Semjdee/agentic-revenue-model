@@ -1,7 +1,8 @@
 import { db, schema } from "@/db/client";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { FREE_TIER_GRANT_CREDITS, PAID_TOPUP_CREDITS } from "./pricing";
-import type { AgentRunTrigger } from "@/db/schema";
+import { FREE_TIER_GRANT_CREDITS } from "./pricing";
+import { PLAN_MONTHLY_CREDITS } from "./plans";
+import type { AgentRunTrigger, CreditPlan } from "@/db/schema";
 
 // ============================================================================
 // Tenant credit reserve & max-drawdown policy — "special AI notes."
@@ -67,10 +68,21 @@ export const DISCRETIONARY_DAILY_BURST_MULTIPLIER = 2;
 /** SEMI_ESSENTIAL gets a bigger daily allowance than pure discretionary testing, but is still capped. */
 export const SEMI_ESSENTIAL_DAILY_BURST_MULTIPLIER = 4;
 
-/** The reference monthly credit budget a tenant's reserve/cap percentages are computed against. */
-export function resolveMonthlyAllotment(balance: { plan: string; monthlyAllotment: number | null }): number {
+/** The reference monthly credit budget a tenant's reserve/cap percentages
+ * are computed against. FREE has no monthly renewal (its one-time signup
+ * grant, FREE_TIER_GRANT_CREDITS, is used as the reference instead of
+ * PLAN_MONTHLY_CREDITS.FREE, which is 0 by design — see plans.ts) so the
+ * reserve/cap math still means something for a FREE tenant living off
+ * their initial grant plus top-ups. */
+export function resolveMonthlyAllotment(balance: { plan: CreditPlan; monthlyAllotment: number | null }): number {
   if (balance.monthlyAllotment && balance.monthlyAllotment > 0) return balance.monthlyAllotment;
-  return balance.plan === "PAID" ? PAID_TOPUP_CREDITS : FREE_TIER_GRANT_CREDITS;
+  if (balance.plan === "FREE") return FREE_TIER_GRANT_CREDITS;
+  // Defensive fallback for a plan value that predates the 3-tier model
+  // (e.g. a stray "PAID" row from before CREDIT_PLANS changed) — treat it
+  // as FREE's reference amount rather than crashing on an undefined
+  // lookup. Confirmed via direct query that no such rows exist locally as
+  // of this change; this guards production data this code can't inspect.
+  return PLAN_MONTHLY_CREDITS[balance.plan] ?? FREE_TIER_GRANT_CREDITS;
 }
 
 export interface TieredCreditCheckResult {

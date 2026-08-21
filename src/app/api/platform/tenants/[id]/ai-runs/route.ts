@@ -1,25 +1,23 @@
 import { db, schema } from "@/db/client";
 import { eq, desc, sql } from "drizzle-orm";
-import { getSession } from "@/lib/auth";
+import { requirePlatformSession } from "@/lib/platform-auth";
 import { jsonError, jsonOk } from "@/lib/api";
 
-// AI execution observability (multi-agent-routing spec Part B §39-40):
-// every AgentRun (src/modules/ai/execution-gateway.ts) the tenant's agents
-// have produced, plus rollup stats so a business owner can see at a
-// glance whether their AI is behaving — total spend, how many runs got
-// stopped for looping/hitting a limit, how many timed out. Tenant-scoped
-// only (no cross-tenant view) — that's a platform-admin concern this
-// route deliberately doesn't expose.
-export async function GET() {
-  const session = await getSession();
-  if (!session) return jsonError("Not authenticated", 401);
+// The raw agent_runs detail (model, tokens, $ cost, stop reason) this
+// used to live at /api/internal/ai/runs, reachable by any tenant session
+// — moved here per Master Product Architecture Update §29-31: tenants
+// never see raw provider/token/cost internals; that data still exists in
+// full for Platform Staff. Tenant-facing equivalent is now
+// /api/internal/billing/ai-activity, translated into business-readable
+// language with no internals.
+export async function GET(_req: Request, { params }: { params: { id: string } }) {
+  try {
+    await requirePlatformSession();
+  } catch {
+    return jsonError("Not authenticated", 401);
+  }
 
-  const recent = await db
-    .select()
-    .from(schema.agentRuns)
-    .where(eq(schema.agentRuns.tenantId, session.tenantId))
-    .orderBy(desc(schema.agentRuns.startedAt))
-    .limit(50);
+  const recent = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.tenantId, params.id)).orderBy(desc(schema.agentRuns.startedAt)).limit(100);
 
   const [stats] = await db
     .select({
@@ -33,7 +31,7 @@ export async function GET() {
       avgToolCalls: sql<string>`coalesce(avg(${schema.agentRuns.toolCalls}), 0)`,
     })
     .from(schema.agentRuns)
-    .where(eq(schema.agentRuns.tenantId, session.tenantId));
+    .where(eq(schema.agentRuns.tenantId, params.id));
 
   return jsonOk({ recent, stats });
 }
