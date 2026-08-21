@@ -86,6 +86,14 @@ function conversationToTouch(conv: typeof schema.conversations.$inferSelect, tou
     clickIds: { gclid: conv.gclid ?? undefined, fbclid: conv.fbclid ?? undefined },
     landingPage: conv.landingPage,
     referringPage: conv.referringUrl,
+    // Passed straight through from the conversation row (set at creation
+    // time when it started from a resolved influencer referral — see
+    // startChannelConversation() in modules/conversations/engine.ts) so
+    // every touch this conversation ever produces (the generic "TOUCH"
+    // row AND any later FIRST/LAST promotion) stays correctly credited
+    // to the influencer/tracking link without a parallel touch path.
+    influencerId: conv.influencerId ?? null,
+    trackingLinkId: conv.trackingLinkId ?? null,
     touchType,
   };
 }

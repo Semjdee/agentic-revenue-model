@@ -14,6 +14,7 @@ export type Resource =
   | "knowledge"
   | "followups"
   | "advertising"
+  | "influencers"
   | "attribution"
   | "reports"
   | "integrations"
@@ -35,6 +36,7 @@ const FULL: Record<Resource, Action[]> = {
   knowledge: ["view", "create", "edit", "delete"],
   followups: ["view", "create", "edit", "delete"],
   advertising: ["view", "create", "edit", "delete", "approve"],
+  influencers: ["view", "create", "edit", "delete", "approve"],
   attribution: ["view"],
   reports: ["view"],
   integrations: ["view", "create", "edit", "delete"],
@@ -69,6 +71,7 @@ export const ROLE_PERMISSIONS: Record<Role, Record<Resource, Action[]>> = {
   MARKETING: {
     ...READ_ONLY,
     advertising: ["view", "create", "edit"],
+    influencers: ["view", "create", "edit"],
     attribution: ["view"],
     knowledge: ["view", "create", "edit"],
   },

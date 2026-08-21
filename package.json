@@ -10,6 +10,7 @@
     "worker": "tsx scripts/worker.ts",
     "seed": "tsx scripts/seed.ts",
     "demo-journey": "tsx scripts/demo-journey.ts",
+    "demo-journey-phase2": "tsx scripts/demo-journey-phase2.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },

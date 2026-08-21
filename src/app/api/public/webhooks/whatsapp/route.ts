@@ -3,6 +3,8 @@ import { db, schema } from "@/db/client";
 import { and, eq } from "drizzle-orm";
 import { jsonError, jsonOk } from "@/lib/api";
 import { startChannelConversation } from "@/modules/conversations/engine";
+import { extractReferralCode } from "@/modules/influencers/attribution";
+import { resolveTrackingLink } from "@/modules/influencers/tracking-links";
 
 // docs/PHASE_2_EXTENSIONS_SPEC.md section 13's flow: "WhatsApp message ->
 // Meta webhook -> WhatsApp adapter -> normalized Message -> Conversation
@@ -35,6 +37,18 @@ export async function POST(req: NextRequest) {
     .limit(1);
   if (!integration) return jsonError("Unknown or disconnected WhatsApp number", 404);
 
+  // Milestone 5: detect an influencer referral token BEFORE handing off
+  // to the normal conversation flow (spec section 24 step 1-2). Resolved
+  // per-tenant since tracking codes are only unique within a tenant.
+  let referral: Parameters<typeof startChannelConversation>[0]["referral"];
+  const refCode = extractReferralCode(message.text.body);
+  if (refCode) {
+    const link = await resolveTrackingLink(integration.tenantId, refCode);
+    if (link && link.status === "ACTIVE") {
+      referral = { trackingLinkId: link.id, influencerId: link.influencerId, campaignName: link.campaignName, contentLabel: link.contentLabel };
+    }
+  }
+
   const result = await startChannelConversation({
     tenantId: integration.tenantId,
     channel: "WHATSAPP",
@@ -42,6 +56,7 @@ export async function POST(req: NextRequest) {
     identityValue: message.from,
     contactName: contactProfile?.name,
     content: message.text.body,
+    referral,
   });
 
   await db.update(schema.integrations).set({ lastSyncAt: new Date() }).where(eq(schema.integrations.id, integration.id));

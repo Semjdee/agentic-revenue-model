@@ -12,6 +12,7 @@ import { recordTrafficSession, recordConversationTouch } from "@/modules/attribu
 import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import { ensureLegacyWidgetForAgent, firstEnabledWidgetAgent } from "@/modules/widgets/service";
 import { routeConversation } from "@/modules/widgets/router";
+import { isReferralOnlyMessage } from "@/modules/influencers/attribution";
 
 export interface StartConversationInput {
   /** Legacy embed: <script data-agent="..."> — still fully supported,
@@ -183,6 +184,12 @@ export async function startChannelConversation(input: {
   identityValue: string; // phone number / platform user id
   contactName?: string;
   content: string;
+  /** Set when this message resolved an influencer tracking-link referral
+   * code (Milestone 5 — see the WhatsApp webhook's "Ref: <code>"
+   * detection). Only applied to a brand-new conversation — a returning
+   * customer's existing OPEN conversation isn't re-attributed just
+   * because a later message happens to repeat a referral code. */
+  referral?: { trackingLinkId: string; influencerId: string; campaignName: string; contentLabel?: string | null };
 }) {
   const { tenantId, channel, identityType, identityValue, content } = input;
 
@@ -222,12 +229,37 @@ export async function startChannelConversation(input: {
 
   if (!conversation) {
     const conversationId = generateId();
-    await db.insert(schema.conversations).values({ id: conversationId, tenantId, contactId, agentId: agent.id, channel });
+    await db.insert(schema.conversations).values({
+      id: conversationId,
+      tenantId,
+      contactId,
+      agentId: agent.id,
+      channel,
+      ...(input.referral && {
+        trackingLinkId: input.referral.trackingLinkId,
+        influencerId: input.referral.influencerId,
+        utmSource: "influencer",
+        utmMedium: "influencer",
+        utmCampaign: input.referral.campaignName,
+        utmContent: input.referral.contentLabel ?? undefined,
+      }),
+    });
     [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
     if (conversation) await recordConversationTouch(conversation);
     await db.insert(schema.messages).values({ id: generateId(), tenantId, conversationId, sender: "AI", content: agent.greeting || `Hi! I'm ${agent.name}. How can I help you today?` });
     await dispatchWebhooks(tenantId, "conversation.created", { conversationId });
     await logOnboardingEventOnce(tenantId, "first_real_conversation", { conversationId, channel });
+  }
+
+  // A message that's JUST the referral token (what WhatsApp actually
+  // sends when a follower taps the tracking link's deep link — see
+  // buildWhatsAppDeepLink) is a tracking payload, not a real customer
+  // utterance. The conversation + attribution are already recorded
+  // above; skip generating an AI reply for this one message so it
+  // doesn't silently consume a qualification question, and let the
+  // customer's actual next message be the real first turn.
+  if (input.referral && isReferralOnlyMessage(content)) {
+    return { conversationId: conversation.id, contactId, aiReplied: false, aiActive: conversation.aiActive };
   }
 
   const result = await handleCustomerMessage({ tenantId, conversationId: conversation.id, content });
