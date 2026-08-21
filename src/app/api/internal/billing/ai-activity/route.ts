@@ -2,17 +2,16 @@ import { db, schema } from "@/db/client";
 import { eq, desc } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
-import { approxCreditsFromCost } from "@/modules/billing/pricing";
 
 // Tenant-facing "AI Activity" (Master Product Architecture Update
 // §29-31) — replaces the old raw AI Runs view (model/tokens/$cost/stop
 // reason), which moved to Platform Staff only at
 // /api/platform/tenants/[id]/ai-runs. Same underlying agent_runs data,
 // translated into business-readable language: a trigger type becomes an
-// activity label, a status becomes plain language, and cost is reported
-// in credits (via approxCreditsFromCost — genuinely $0 MockAIProvider
-// runs report 0 credits, not a false minimum-1 floor) rather than dollars
-// or tokens.
+// activity label, a status becomes plain language. No credit or token
+// amount here either — per policy, no tenant role sees usage numbers, so
+// this reports only whether a run was charged at all (a failed/timed-out
+// run is never charged — see execution-gateway.ts), not how much.
 const TRIGGER_LABELS: Record<string, string> = {
   INBOUND_MESSAGE: "Customer Conversation",
   SANDBOX_TEST: "Agent Test",
@@ -46,14 +45,12 @@ export async function GET() {
       title: agentName ? `${label} — ${agentName}` : label,
       status: STATUS_LABELS[r.status] ?? "Completed",
       isFailure,
-      credits: isFailure ? 0 : approxCreditsFromCost(Number(r.estimatedCostUsd)), // failed/timed-out runs never charge — see execution-gateway.ts
       when: r.startedAt,
     };
   });
 
-  const totalCreditsUsed = activity.reduce((s, a) => s + a.credits, 0);
   const conversationCount = new Set(runs.filter((r) => r.triggerType === "INBOUND_MESSAGE" && r.conversationId).map((r) => r.conversationId)).size;
   const actionCount = runs.length;
 
-  return jsonOk({ activity, summary: { totalCreditsUsed, conversationCount, actionCount } });
+  return jsonOk({ activity, summary: { conversationCount, actionCount } });
 }

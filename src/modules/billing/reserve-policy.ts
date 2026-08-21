@@ -144,6 +144,38 @@ export async function checkCreditsForTrigger(tenantId: string, triggerType: Agen
   return { ok: true, balance, tier, reserveThreshold, dailyCap, usedToday };
 }
 
+// ============================================================================
+// Tenant-facing capacity status — deliberately the ONLY thing any
+// tenant-facing UI is allowed to render about AI credits (owner, sales,
+// any role/department, no exceptions). No raw balance, no monthly
+// allotment, no per-agent usage, no ledger amounts — those are Platform
+// Admin data only (same "raw internals never reach tenants" discipline as
+// AI Activity replacing the old raw AI Runs tab, see BUILD_NOTES.md §9i).
+// Reduces everything to a coarse, rounded percent-remaining BAND (nearest
+// 5%, never the exact number, so it can't be used to back-calculate the
+// real balance) plus a 3-state status straight off this file's own
+// RESERVE_PCT threshold — "protected" is the literal answer to "what
+// happens at 20%": non-essential AI usage pauses, live customer
+// conversations never do (see checkCreditsForTrigger() above).
+// ============================================================================
+
+export type CapacityStatus = "healthy" | "protected" | "exhausted";
+
+export interface TenantCapacitySummary {
+  status: CapacityStatus;
+  /** Rounded to the nearest 5 — a band, not the real percentage. */
+  percentRemainingBand: number;
+}
+
+export function summarizeCapacityStatus(balance: { balance: number; plan: CreditPlan; monthlyAllotment: number | null }): TenantCapacitySummary {
+  const monthlyAllotment = resolveMonthlyAllotment(balance);
+  const rawPct = monthlyAllotment > 0 ? (balance.balance / monthlyAllotment) * 100 : 0;
+  const clamped = Math.max(0, Math.min(100, rawPct));
+  const percentRemainingBand = Math.round(clamped / 5) * 5;
+  const status: CapacityStatus = balance.balance <= 0 ? "exhausted" : clamped <= RESERVE_PCT * 100 ? "protected" : "healthy";
+  return { status, percentRemainingBand };
+}
+
 /** Human-readable explanation for a blocked check — used by both the sandbox-test UI and any future SEMI_ESSENTIAL caller. */
 export function explainBlockedReason(result: TieredCreditCheckResult): string {
   switch (result.reason) {

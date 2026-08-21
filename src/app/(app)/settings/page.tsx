@@ -495,16 +495,17 @@ function ActivationTab() {
 interface CreditLedgerRow {
   id: string;
   type: string;
-  credits: number;
-  balanceAfter: number;
+  direction: "added" | "used";
   createdAt: string;
 }
 
+type CapacityStatus = "healthy" | "protected" | "exhausted";
+
 interface CreditsResponse {
-  balance: number;
   plan: string;
+  status: CapacityStatus;
+  percentRemainingBand: number;
   recent: CreditLedgerRow[];
-  pricing: { freeTierGrant: number; paidTopupCredits: number; paidTopupPriceUsd: number };
 }
 
 interface CreditPackageOption {
@@ -514,23 +515,9 @@ interface CreditPackageOption {
   custom: boolean;
 }
 
-interface AgentCostRow {
-  agentId: string | null;
-  agentName: string;
-  runs: number;
-  totalCostUsd: number;
-  approxCredits: number;
-}
 interface UsageForecast {
-  currentBalance: number;
-  monthlyAllotment: number;
-  reserveThreshold: number;
-  avgDailyCredits7d: number;
-  avgDailyCredits30d: number;
-  projectedMonthlyCredits: number | null;
-  daysOfRunway: number | null;
-  byAgent: AgentCostRow[];
-  reserveStatus: { tier: string; ok: boolean; reason?: string };
+  status: CapacityStatus;
+  percentRemainingBand: number;
 }
 
 // Real Flutterwave mobile-money top-up (Master Product Architecture
@@ -642,9 +629,22 @@ function AddCreditsDialog({ onClose }: { onClose: () => void }) {
 // reserve-policy.ts. Every number here is real trailing usage, never a
 // plan-based guess; "insufficient data yet" is shown honestly rather
 // than a number extrapolated from one or two days of activity.
+function capacityTone(status: CapacityStatus): "good" | "warning" | "critical" {
+  if (status === "exhausted") return "critical";
+  if (status === "protected") return "warning";
+  return "good";
+}
+
+// Live Conversation Protection — deliberately shows NO credit or token
+// COUNT to any tenant role (Owner, Sales, any department): never "1,234
+// credits remaining," only a rounded percent-remaining BAND (nearest 5%
+// — not exact, can't be used to back-calculate the real balance) plus a
+// 3-state status straight off the reserve policy's own 20% threshold. The
+// exact balance, monthly allotment, and usage rate are Platform Admin
+// data only. See reserve-policy.ts's "Special AI Notes" — this card is
+// the tenant-facing expression of that same policy.
 function UsageForecastCard() {
   const [forecast, setForecast] = useState<UsageForecast | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     api.get<UsageForecast>("/api/internal/billing/forecast").then(setForecast);
@@ -652,60 +652,21 @@ function UsageForecastCard() {
 
   if (!forecast) return null;
 
-  const inReserve = forecast.currentBalance <= forecast.reserveThreshold;
-  // "If enough historical data exists... Never show absurd calculations
-  // such as '6993 days remaining.'" (Master Product Architecture Update
-  // §32) — cap the displayed runway rather than show a huge number a
-  // near-empty daily average produces.
-  const runwayDisplay = forecast.daysOfRunway === null ? "Not enough usage yet to estimate." : forecast.daysOfRunway > 365 ? "365+ days" : `${forecast.daysOfRunway} days`;
-
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-[12.5px] font-semibold text-ink-primary">Live Conversation Protection</p>
         <Badge tone="good">ON</Badge>
       </div>
-      <p className="text-[11.5px] text-ink-muted">We keep part of your available AI capacity protected for real customer conversations — those always keep working, even if your balance runs low.</p>
-      {inReserve && (
-        <p className="text-[11.5px] text-status-critical">Your balance has dropped into that protected range — agent-testing pauses until you top up, but live customer conversations are unaffected.</p>
-      )}
-      <div className="grid grid-cols-2 gap-3">
-        <Stat label="Estimated remaining use" value={runwayDisplay} />
-        <Stat label="Projected this month" value={forecast.projectedMonthlyCredits === null ? "Not enough data yet" : `${forecast.projectedMonthlyCredits.toLocaleString()} credits`} />
+      <p className="text-[11.5px] text-ink-muted">We keep part of your available AI capacity protected for real customer conversations — those always keep working, even if the rest runs low.</p>
+      <div className="flex items-center justify-between rounded-lg border border-black/[0.06] dark:border-white/10 px-3 py-2.5">
+        <span className="text-[12.5px] text-ink-secondary">Monthly AI capacity remaining</span>
+        <Badge tone={capacityTone(forecast.status)}>~{forecast.percentRemainingBand}%</Badge>
       </div>
-      <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-[11px] text-ink-muted underline decoration-dotted">
-        {showAdvanced ? "Hide" : "Show"} advanced details
-      </button>
-      {showAdvanced && (
-        <div className="grid grid-cols-2 gap-3 pt-1 border-t border-black/[0.06] dark:border-white/10">
-          <Stat label="Avg credits / day (7d)" value={forecast.avgDailyCredits7d.toLocaleString()} />
-          <Stat label="Reserved for live chats" value={forecast.reserveThreshold.toLocaleString()} />
-        </div>
+      {forecast.status === "protected" && (
+        <p className="text-[11.5px] text-status-critical">Down to the protected 20% — non-essential AI usage (like agent testing) is paused until this recovers. Live customer conversations are never affected.</p>
       )}
-      {forecast.byAgent.length > 0 && (
-        <div>
-          <p className="text-[11px] text-ink-muted uppercase tracking-wide mb-1.5">Usage by agent (last 30 days)</p>
-          <div className="space-y-1">
-            {forecast.byAgent.map((a) => (
-              <div key={a.agentId ?? "unassigned"} className="flex items-center justify-between text-[12px]">
-                <span className="text-ink-secondary truncate">{a.agentName}</span>
-                <span className="text-ink-muted tabular-nums shrink-0 ml-2">
-                  {a.approxCredits.toLocaleString()} credits
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10.5px] text-ink-muted uppercase tracking-wide">{label}</p>
-      <p className="text-[15px] font-semibold text-ink-primary tabular-nums mt-0.5">{value}</p>
+      {forecast.status === "exhausted" && <p className="text-[11.5px] text-status-critical">Top up to resume AI conversations.</p>}
     </div>
   );
 }
@@ -714,6 +675,20 @@ function Stat({ label, value }: { label: string; value: string }) {
 // metered charge (or a real grant), never a placeholder number. No raw
 // model/token/cost fields shown here — that moved to Platform Admin (see
 // AIActivityTab's header comment); "Credits used" is all a tenant sees.
+const LEDGER_TYPE_LABELS: Record<string, string> = {
+  GRANT: "Plan credit added",
+  PURCHASE: "Top-up purchased",
+  CONSUMPTION: "AI usage",
+  ADJUSTMENT: "Adjustment",
+};
+
+// AI credits — deliberately no numbers here for ANY tenant role (Owner,
+// Sales, any department): no balance, no ledger amounts, no "X credits
+// remaining." Just plan, a rounded capacity band/status (see
+// UsageForecastCard, backed by reserve-policy.ts's "Special AI Notes"),
+// and a direction-only activity log. Raw numbers moved to Platform Admin
+// entirely — see AIActivityTab's header comment for the same discipline
+// applied to run detail.
 function CreditsTab() {
   const [data, setData] = useState<CreditsResponse | null>(null);
   const [addCreditsOpen, setAddCreditsOpen] = useState(false);
@@ -727,24 +702,21 @@ function CreditsTab() {
 
   if (!data) return <p className="text-[12.5px] text-ink-muted">Loading…</p>;
 
-  const low = data.balance <= data.pricing.freeTierGrant * 0.1;
-
   return (
     <div className="space-y-4">
       <div className="card p-4 flex items-center justify-between">
         <div>
           <p className="text-[11px] text-ink-muted uppercase tracking-wide">AI Credits</p>
-          <p className="text-[22px] font-semibold text-ink-primary mt-0.5">
-            {data.balance.toLocaleString()} <span className="text-[13px] font-normal text-ink-muted">credits remaining</span>
-          </p>
-          <Badge tone={data.plan === "FREE" ? "neutral" : "brand"}>{data.plan === "FREE" ? "Free" : data.plan === "PRO" ? "Pro" : "Premium"}</Badge>
+          <Badge tone={data.plan === "FREE" ? "neutral" : "brand"} className="mt-1">
+            {data.plan === "FREE" ? "Free" : data.plan === "PRO" ? "Pro" : "Premium"}
+          </Badge>
           <p className="text-[12px] text-ink-muted mt-2 max-w-xs">Credits power AI conversations, analysis, and AI actions.</p>
         </div>
         <Button onClick={() => setAddCreditsOpen(true)}>Add Credits</Button>
       </div>
-      {low && (
+      {data.status === "exhausted" && (
         <div className="rounded-lg border border-status-critical/30 bg-status-critical/5 px-4 py-2.5 text-[12.5px] text-status-critical">
-          Running low — once this reaches 0, your AI agent stops replying automatically and hands new conversations to a human until you top up.
+          Out of AI capacity — your AI agent stops replying automatically and hands new conversations to a human until you top up.
         </div>
       )}
       <UsageForecastCard />
@@ -755,17 +727,15 @@ function CreditsTab() {
             <thead>
               <tr className="border-b border-black/10 dark:border-white/10 text-left text-ink-muted text-[11px] uppercase tracking-wide">
                 <th className="px-4 py-2.5 font-medium">Type</th>
-                <th className="px-4 py-2.5 font-medium">Credits</th>
                 <th className="px-4 py-2.5 font-medium">When</th>
               </tr>
             </thead>
             <tbody>
               {data.recent.map((r) => (
                 <tr key={r.id} className="border-b border-black/[0.05] dark:border-white/[0.05]">
-                  <td className="px-4 py-2.5 text-ink-primary font-medium">{r.type}</td>
-                  <td className={clsx("px-4 py-2.5 font-medium", r.credits < 0 ? "text-status-critical" : "text-status-positive")}>
-                    {r.credits > 0 ? "+" : ""}
-                    {r.credits}
+                  <td className="px-4 py-2.5 text-ink-primary font-medium">
+                    <span className={clsx("inline-block w-1.5 h-1.5 rounded-full mr-1.5", r.direction === "added" ? "bg-status-good" : "bg-ink-muted")} />
+                    {LEDGER_TYPE_LABELS[r.type] ?? r.type}
                   </td>
                   <td className="px-4 py-2.5 text-ink-muted">{new Date(r.createdAt).toLocaleString()}</td>
                 </tr>
@@ -959,21 +929,21 @@ interface AIActivityRow {
   title: string;
   status: string;
   isFailure: boolean;
-  credits: number;
   when: string;
 }
 interface AIActivityResponse {
   activity: AIActivityRow[];
-  summary: { totalCreditsUsed: number; conversationCount: number; actionCount: number };
+  summary: { conversationCount: number; actionCount: number };
 }
 
 // Business-readable AI activity (Master Product Architecture Update
 // §29-31) — backed by /api/internal/billing/ai-activity, which translates
 // the same underlying AgentRun data the old raw "AI Runs" tab showed
-// (model names, token counts, $ cost, stop reasons) into plain language
-// and credits. The raw detail didn't go away — it moved to Platform Admin
-// (/api/platform/tenants/[id]/ai-runs), which is the only place that data
-// is meant to be visible per the doc's explicit rule.
+// (model names, token counts, $ cost, stop reasons) into plain language.
+// No credit/token amount here either, for any tenant role — see
+// reserve-policy.ts's "Special AI Notes." The raw detail didn't go away —
+// it moved to Platform Admin (/api/platform/tenants/[id]/ai-runs), which
+// is the only place that data is meant to be visible.
 function AIActivityTab() {
   const [data, setData] = useState<AIActivityResponse | null>(null);
 
@@ -986,10 +956,9 @@ function AIActivityTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <StatChip label="AI Conversations" value={summary.conversationCount.toLocaleString()} />
         <StatChip label="AI Actions" value={summary.actionCount.toLocaleString()} />
-        <StatChip label="Credits Used" value={summary.totalCreditsUsed.toLocaleString()} />
       </div>
       <div>
         <p className="text-[12.5px] text-ink-secondary mb-2">Recent activity</p>
@@ -1005,7 +974,7 @@ function AIActivityTab() {
                     {a.status} · {new Date(a.when).toLocaleString()}
                   </p>
                 </div>
-                {a.isFailure ? <Badge tone="critical">0 credits charged</Badge> : <Badge tone="neutral">{a.credits} credit{a.credits === 1 ? "" : "s"} used</Badge>}
+                {a.isFailure ? <Badge tone="critical">Not charged</Badge> : <Badge tone="neutral">Completed</Badge>}
               </div>
             ))
           )}
