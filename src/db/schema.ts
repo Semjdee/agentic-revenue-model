@@ -74,6 +74,13 @@ export const tenants = pgTable("tenants", {
   description: text("description"),
   primaryObjective: text("primary_objective"),
   primaryChannel: text("primary_channel"),
+  // Which industry_templates.key (if any) this tenant applied during
+  // AGENT_SETUP — Industry Team Subscription Architecture doc, Part A.
+  // Informational only: applying a template just pre-fills the SAME
+  // agents/knowledge-base/products objects manual setup creates (see
+  // guided-setup.ts), so nothing else reads this at runtime except Part
+  // E's template-adoption analytics.
+  appliedIndustryTemplateKey: text("applied_industry_template_key"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
@@ -100,6 +107,20 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
+// Team seats (Industry Team Subscription Architecture doc, Part B).
+// Additive to `active` — `active` stays exactly what it always was (the
+// boolean the session/permission code gates on); `status` is a separate,
+// coarser lifecycle for seat counting only. Default is ACTIVE (not
+// INVITED) so every existing insert path — self-signup, phone/OTP,
+// Google/Apple — keeps producing an immediately-usable account with no
+// change; only the team-invite route (api/internal/team) explicitly
+// creates a user as INVITED, and the login route flips INVITED->ACTIVE on
+// that user's first successful login. SUSPENDED/DEACTIVATED are manual,
+// platform-admin-adjacent states for later use; neither counts toward a
+// tenant's billable seats (see modules/team/seats.ts).
+export const USER_STATUSES = ["INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"] as const;
+export type UserStatus = (typeof USER_STATUSES)[number];
+
 export const users = pgTable(
   "users",
   {
@@ -122,6 +143,7 @@ export const users = pgTable(
     role: text("role").$type<Role>().notNull().default("SALES"),
     avatarUrl: text("avatar_url"),
     active: boolean("active").notNull().default(true),
+    status: text("status").$type<UserStatus>().notNull().default("ACTIVE"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => ({
@@ -1202,6 +1224,12 @@ export const auditLogs = pgTable(
 // One row per tenant. Backs "save and resume" (spec section 22) — the
 // wizard is a step-router reading this, not a multi-page form that loses
 // state on refresh.
+// TEAM_INVITE inserted between HEALTH_CHECK and GO_LIVE (Industry Team
+// Subscription Architecture doc, Part D) — explicitly skippable, wraps the
+// *existing* team-invite mechanism (api/internal/team), no new invite
+// backend. Additive enum value: a tenant already at/past GO_LIVE when this
+// shipped simply never has TEAM_INVITE in `completedSteps` — harmless,
+// since nothing gates on it retroactively.
 export const ONBOARDING_STEPS = [
   "ACCOUNT",
   "BUSINESS_PROFILE",
@@ -1210,6 +1238,7 @@ export const ONBOARDING_STEPS = [
   "AGENT_TEST",
   "CHANNEL_CONNECT",
   "HEALTH_CHECK",
+  "TEAM_INVITE",
   "GO_LIVE",
 ] as const;
 
@@ -1360,6 +1389,89 @@ export const creditPurchaseIntents = pgTable(
     completedAt: ts("completed_at"),
   },
   (t) => ({ tenantIdx: index("credit_purchase_intents_tenant_idx").on(t.tenantId), chargeIdx: index("credit_purchase_intents_charge_idx").on(t.chargeId) })
+);
+
+// ---------------------------------------------------------------------------
+// Industry templates (Industry Team Subscription Architecture doc, Part
+// A). Data-driven starting points for the SAME objects manual setup
+// already creates (agents' qualification questions/sales rules/restricted
+// topics/escalation conditions/tone, plus suggested KB doc titles and
+// product categories) — never a parallel agent type, never fabricated
+// knowledge-base content. Platform-Admin-editable (see
+// api/platform/industry-templates) so adding/tuning an industry is a data
+// change, not a redeploy. Deliberately does NOT touch LEAD_STAGES — see
+// BUILD_NOTES.md for why per-industry pipeline stages are out of scope
+// here.
+// ---------------------------------------------------------------------------
+export const industryTemplates = pgTable("industry_templates", {
+  id: id(),
+  key: text("key").notNull().unique(),
+  label: text("label").notNull(),
+  description: text("description"),
+  tone: text("tone"),
+  qualificationQuestions: jsonb("qualification_questions").$type<string[]>().default([]),
+  salesRules: jsonb("sales_rules").$type<string[]>().default([]),
+  restrictedTopics: jsonb("restricted_topics").$type<string[]>().default([]),
+  escalationConditions: jsonb("escalation_conditions").$type<string[]>().default([]),
+  // Suggested KB *titles* only — a checklist prompting the owner to go
+  // write these, never auto-generated fake content (spec: "never fabricate
+  // business content").
+  knowledgeBaseSuggestions: jsonb("knowledge_base_suggestions").$type<string[]>().default([]),
+  productCategorySuggestions: jsonb("product_category_suggestions").$type<string[]>().default([]),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Subscription terms (Industry Team Subscription Architecture doc, Part
+// C). A `subscriptions` row is written once a term purchase is fulfilled
+// (see modules/billing/subscription-purchase.ts) — `renewalAmountUsd`/
+// `termEndsAt` are computed and stored for visibility, never auto-charged
+// (no recurring-billing infra exists; same manual-renewal honesty as how
+// tenant plan itself is already set today via PATCH
+// /api/platform/tenants/[id]/plan).
+// ---------------------------------------------------------------------------
+export const SUBSCRIPTION_TERMS = ["MONTHLY", "SIX_MONTH", "TWELVE_MONTH", "TWENTY_FOUR_MONTH"] as const;
+export type SubscriptionTerm = (typeof SUBSCRIPTION_TERMS)[number];
+
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    plan: text("plan").$type<CreditPlan>().notNull(),
+    term: text("term").$type<SubscriptionTerm>().notNull(),
+    seats: integer("seats").notNull(),
+    totalUsd: numeric("total_usd").notNull(),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    termEndsAt: ts("term_ends_at").notNull(),
+    renewalAmountUsd: numeric("renewal_amount_usd").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ tenantIdx: index("subscriptions_tenant_idx").on(t.tenantId) })
+);
+
+// Same PENDING/SUCCEEDED/FAILED idempotent-intent shape as
+// credit_purchase_intents above, reused deliberately rather than
+// duplicated logic — see subscription-purchase.ts.
+export const SUBSCRIPTION_PURCHASE_INTENT_STATUSES = ["PENDING", "SUCCEEDED", "FAILED"] as const;
+export const subscriptionPurchaseIntents = pgTable(
+  "subscription_purchase_intents",
+  {
+    id: id(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    reference: text("reference").notNull().unique(),
+    chargeId: text("charge_id"),
+    plan: text("plan").$type<CreditPlan>().notNull(),
+    term: text("term").$type<SubscriptionTerm>().notNull(),
+    seats: integer("seats").notNull(),
+    totalUsd: numeric("total_usd").notNull(),
+    status: text("status").$type<(typeof SUBSCRIPTION_PURCHASE_INTENT_STATUSES)[number]>().notNull().default("PENDING"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    completedAt: ts("completed_at"),
+  },
+  (t) => ({ tenantIdx: index("subscription_purchase_intents_tenant_idx").on(t.tenantId), chargeIdx: index("subscription_purchase_intents_charge_idx").on(t.chargeId) })
 );
 
 // ---------------------------------------------------------------------------

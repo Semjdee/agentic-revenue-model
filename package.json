@@ -12,6 +12,7 @@
     "demo-journey": "tsx scripts/demo-journey.ts",
     "demo-journey-phase2": "tsx scripts/demo-journey-phase2.ts",
     "calculate-plan-credits": "tsx scripts/calculate-plan-credits.ts",
+    "seed-industry-templates": "tsx scripts/seed-industry-templates.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },

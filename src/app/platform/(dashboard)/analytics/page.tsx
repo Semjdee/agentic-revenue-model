@@ -50,11 +50,39 @@ interface AiEconomics {
   firstPurchaseConversionPct: number;
   repeatPurchaseRatePct: number;
 }
+interface TemplateAdoptionRow {
+  templateKey: string | null;
+  tenantCount: number;
+  paidTenantCount: number;
+}
+interface SeatGrowthByPlan {
+  plan: string;
+  tenants: number;
+  billableSeats: number;
+  extraSeats: number;
+}
+interface SeatGrowthSummary {
+  totalTenants: number;
+  totalBillableSeats: number;
+  totalIncludedSeats: number;
+  totalExtraSeats: number;
+  byPlan: SeatGrowthByPlan[];
+}
+interface TermDistributionRow {
+  term: string;
+  label: string;
+  purchaseCount: number;
+  avgDiscountPct: number;
+  totalRevenueUsd: number;
+}
 interface AnalyticsData {
   topAgentsByCost: AgentCostRow[];
   cohorts: CohortRow[];
   tenantForecasts: TenantForecastRow[];
   aiEconomics: AiEconomics;
+  templateAdoption: TemplateAdoptionRow[];
+  seatGrowth: SeatGrowthSummary;
+  termDistribution: TermDistributionRow[];
 }
 
 function fmtUsd(n: number) {
@@ -127,6 +155,89 @@ export default function PlatformAnalyticsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      <section>
+        <h2 className="text-[14px] font-semibold text-white mb-1">Industry templates, seats &amp; subscription terms</h2>
+        <p className="text-[11.5px] text-white/40 mb-3">Industry Team Subscription Architecture doc, Part E — template adoption, seat expansion, and term-purchase preference, all real aggregates.</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="border border-white/10 rounded-lg overflow-hidden">
+            <p className="text-[11px] text-white/40 uppercase tracking-wide px-4 pt-3 pb-2">Template adoption</p>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-white/40 text-[11px] uppercase tracking-wide">
+                  <th className="px-4 py-2 font-medium">Template</th>
+                  <th className="px-4 py-2 font-medium text-right">Tenants</th>
+                  <th className="px-4 py-2 font-medium text-right">On paid plan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.templateAdoption.map((r) => (
+                  <tr key={r.templateKey ?? "none"} className="border-b border-white/[0.05]">
+                    <td className="px-4 py-2 text-white">{r.templateKey ?? "Started from scratch"}</td>
+                    <td className="px-4 py-2 text-white/80 text-right tabular-nums">{r.tenantCount}</td>
+                    <td className="px-4 py-2 text-white/60 text-right tabular-nums">{r.paidTenantCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border border-white/10 rounded-lg overflow-hidden">
+            <p className="text-[11px] text-white/40 uppercase tracking-wide px-4 pt-3 pb-2">Seat expansion by plan</p>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-white/40 text-[11px] uppercase tracking-wide">
+                  <th className="px-4 py-2 font-medium">Plan</th>
+                  <th className="px-4 py-2 font-medium text-right">Tenants</th>
+                  <th className="px-4 py-2 font-medium text-right">Seats used</th>
+                  <th className="px-4 py-2 font-medium text-right">Extra seats</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.seatGrowth.byPlan.map((r) => (
+                  <tr key={r.plan} className="border-b border-white/[0.05]">
+                    <td className="px-4 py-2 text-white">{r.plan}</td>
+                    <td className="px-4 py-2 text-white/80 text-right tabular-nums">{r.tenants}</td>
+                    <td className="px-4 py-2 text-white/80 text-right tabular-nums">{r.billableSeats}</td>
+                    <td className="px-4 py-2 text-white/60 text-right tabular-nums">{r.extraSeats}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="border border-white/10 rounded-lg overflow-hidden">
+          <p className="text-[11px] text-white/40 uppercase tracking-wide px-4 pt-3 pb-2">Subscription term preference (real purchases only)</p>
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="border-b border-white/10 text-left text-white/40 text-[11px] uppercase tracking-wide">
+                <th className="px-4 py-2 font-medium">Term</th>
+                <th className="px-4 py-2 font-medium text-right">Purchases</th>
+                <th className="px-4 py-2 font-medium text-right">Avg discount</th>
+                <th className="px-4 py-2 font-medium text-right">Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.termDistribution.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-3 text-white/40">No subscription purchases yet.</td>
+                </tr>
+              ) : (
+                data.termDistribution.map((r) => (
+                  <tr key={r.term} className="border-b border-white/[0.05]">
+                    <td className="px-4 py-2 text-white">{r.label}</td>
+                    <td className="px-4 py-2 text-white/80 text-right tabular-nums">{r.purchaseCount}</td>
+                    <td className="px-4 py-2 text-white/60 text-right tabular-nums">{r.avgDiscountPct.toFixed(0)}%</td>
+                    <td className="px-4 py-2 text-white/80 text-right tabular-nums">{fmtUsd2(r.totalRevenueUsd)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section>

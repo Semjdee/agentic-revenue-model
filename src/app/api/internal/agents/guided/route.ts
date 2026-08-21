@@ -8,6 +8,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { logAudit } from "@/lib/audit";
 import { mapAnswersToAgentConfig, type GuidedSetupAnswers } from "@/modules/ai/guided-setup";
 import { advanceOnboardingStep, logOnboardingEvent, setOnboardingAgent } from "@/modules/onboarding/service";
+import { getIndustryTemplateByKey } from "@/modules/onboarding/industry-templates";
 
 // docs/ONBOARDING_SPEC.md addendum — guided setup creates the SAME
 // `agents` row manual creation does (src/app/api/internal/agents/route.ts),
@@ -31,6 +32,12 @@ const answersSchema = z.object({
   locationsServed: z.string().optional(),
   languages: z.array(z.string()).optional(),
   tone: z.string().optional(),
+  // Industry Team Subscription Architecture doc, Part A — optional
+  // industry_templates.key the owner picked before answering these
+  // questions. When set, its arrays are UNIONED into the generated config
+  // (see guided-setup.ts's mapAnswersToAgentConfig), fully editable on the
+  // review screen after, same as every other guided answer.
+  industryTemplateKey: z.string().optional(),
 });
 
 /** Preview only — maps answers to a config for the review screen
@@ -42,8 +49,11 @@ export async function PUT(req: NextRequest) {
   const parsed = answersSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return jsonError("Invalid input", 422, "VALIDATION_ERROR");
 
-  const [tenant] = await db.select().from(schema.tenants).where(eq(schema.tenants.id, session.tenantId)).limit(1);
-  const config = mapAnswersToAgentConfig(parsed.data as GuidedSetupAnswers, tenant?.name ?? "your business");
+  const [tenant, template] = await Promise.all([
+    db.select().from(schema.tenants).where(eq(schema.tenants.id, session.tenantId)).limit(1).then((r) => r[0]),
+    parsed.data.industryTemplateKey ? getIndustryTemplateByKey(parsed.data.industryTemplateKey) : Promise.resolve(null),
+  ]);
+  const config = mapAnswersToAgentConfig(parsed.data as GuidedSetupAnswers, tenant?.name ?? "your business", template ?? undefined);
   return jsonOk(config);
 }
 
@@ -58,6 +68,7 @@ const createSchema = z.object({
   salesRules: z.array(z.string()).default([]),
   restrictedTopics: z.array(z.string()).default([]),
   escalationConditions: z.array(z.string()).default([]),
+  industryTemplateKey: z.string().optional(),
 });
 
 /** Creates the real agent from the (possibly user-edited, per addendum
@@ -68,16 +79,21 @@ export async function POST(req: NextRequest) {
 
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return jsonError("Invalid input", 422, "VALIDATION_ERROR");
+  const { industryTemplateKey, ...agentFields } = parsed.data;
 
   const id = generateId();
   await db.insert(schema.agents).values({
     id,
     tenantId: session.tenantId,
     publicAgentId: generatePublicAgentId(),
-    ...parsed.data,
+    ...agentFields,
     creationMethod: "GUIDED",
     status: "DRAFT",
   });
+
+  if (industryTemplateKey) {
+    await db.update(schema.tenants).set({ appliedIndustryTemplateKey: industryTemplateKey, updatedAt: new Date() }).where(eq(schema.tenants.id, session.tenantId));
+  }
 
   await logAudit({
     tenantId: session.tenantId,
@@ -85,12 +101,12 @@ export async function POST(req: NextRequest) {
     action: "agent.created",
     entity: "agent",
     entityId: id,
-    after: { ...parsed.data, creationMethod: "GUIDED", status: "DRAFT" },
+    after: { ...agentFields, creationMethod: "GUIDED", status: "DRAFT", industryTemplateKey: industryTemplateKey ?? null },
   });
 
   await setOnboardingAgent(session.tenantId, id);
   const progress = await advanceOnboardingStep(session.tenantId, "AGENT_SETUP", "AGENT_TEST");
-  await logOnboardingEvent(session.tenantId, "agent_generated", { agentId: id });
+  await logOnboardingEvent(session.tenantId, "agent_generated", { agentId: id, industryTemplateKey: industryTemplateKey ?? null });
 
   return jsonOk({ id, progress }, 201);
 }

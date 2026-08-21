@@ -61,6 +61,9 @@ export default function SettingsPage() {
             <Tabs.Trigger value="ai-activity" className={TAB_CLASS}>
               AI Activity
             </Tabs.Trigger>
+            <Tabs.Trigger value="billing" className={TAB_CLASS}>
+              Plans &amp; Billing
+            </Tabs.Trigger>
           </Tabs.List>
 
           <Tabs.Content value="engine" className="max-w-xl">
@@ -83,6 +86,9 @@ export default function SettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="ai-activity">
             <AIActivityTab />
+          </Tabs.Content>
+          <Tabs.Content value="billing" className="max-w-xl">
+            <PlansBillingTab />
           </Tabs.Content>
         </Tabs.Root>
       </div>
@@ -770,6 +776,180 @@ function CreditsTab() {
         </div>
       </div>
       {addCreditsOpen && <AddCreditsDialog onClose={() => setAddCreditsOpen(false)} />}
+    </div>
+  );
+}
+
+interface SubscriptionQuote {
+  plan: string;
+  term: string;
+  termMonths: number;
+  seats: number;
+  includedSeats: number;
+  extraSeats: number;
+  basePriceMonthlyUsd: number;
+  extraSeatMonthlyUsd: number;
+  subtotalMonthlyUsd: number;
+  discountPct: number;
+  totalDueUsd: number;
+  effectiveMonthlyPriceUsd: number;
+  renewalAmountUsd: number;
+}
+interface TermOption {
+  term: string;
+  label: string;
+  months: number;
+  discountPct: number;
+}
+
+const PAID_PLANS = ["PRO", "PREMIUM"] as const;
+
+// Term-based subscription purchase (Industry Team Subscription
+// Architecture doc, Part C) — a real Flutterwave charge for the
+// discounted term total, same mobile-money flow as Add Credits. AI
+// credits are never part of this: they stay pay-as-you-go via the Credits
+// &amp; Usage tab regardless of subscription term.
+function PlansBillingTab() {
+  const [currentPlan, setCurrentPlan] = useState<string | null>(null);
+  const [plan, setPlan] = useState<(typeof PAID_PLANS)[number]>("PRO");
+  const [term, setTerm] = useState("MONTHLY");
+  const [seats, setSeats] = useState(3);
+  const [quote, setQuote] = useState<SubscriptionQuote | null>(null);
+  const [terms, setTerms] = useState<TermOption[]>([]);
+  const [network, setNetwork] = useState<"MTN" | "AIRTEL">("MTN");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [started, setStarted] = useState<{ redirectUrl: string | null; isMock: boolean } | null>(null);
+
+  useEffect(() => {
+    api.get<{ plan: string }>("/api/internal/billing/credits").then((r) => setCurrentPlan(r.plan));
+  }, []);
+
+  useEffect(() => {
+    api
+      .get<{ quote: SubscriptionQuote; terms: TermOption[] }>(`/api/internal/billing/subscription/quote?plan=${plan}&term=${term}&seats=${seats}`)
+      .then((r) => {
+        setQuote(r.quote);
+        setTerms(r.terms);
+      })
+      .catch(() => setQuote(null));
+  }, [plan, term, seats]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (!phoneNumber.trim()) throw new Error("Enter your mobile money phone number.");
+      const res = await api.post<{ redirectUrl: string | null; isMock: boolean }>("/api/internal/billing/subscription/initiate", {
+        plan,
+        term,
+        seats,
+        mobileMoneyNetwork: network,
+        phoneNumber: phoneNumber.trim(),
+      });
+      if (res.redirectUrl) {
+        window.location.href = res.redirectUrl;
+      } else {
+        setStarted(res);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start payment");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-4">
+        <p className="text-[11px] text-ink-muted uppercase tracking-wide">Current plan</p>
+        <p className="text-[18px] font-semibold text-ink-primary mt-0.5">{currentPlan ?? "…"}</p>
+        <p className="text-[12px] text-ink-muted mt-1">Purchasing a longer term locks in a discount and moves you to that plan once payment is confirmed.</p>
+      </div>
+
+      <form onSubmit={submit} className="card p-4 space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          {PAID_PLANS.map((p) => (
+            <button
+              type="button"
+              key={p}
+              onClick={() => setPlan(p)}
+              className={clsx("rounded-lg border px-3 py-2.5 text-left transition-colors", plan === p ? "border-brand-500 bg-brand-500/5" : "border-black/10 dark:border-white/15")}
+            >
+              <p className="text-[13.5px] font-semibold text-ink-primary">{p === "PRO" ? "Pro" : "Premium"}</p>
+            </button>
+          ))}
+        </div>
+
+        <div>
+          <Label>Billing term</Label>
+          <div className="grid grid-cols-4 gap-1.5 mt-1">
+            {(terms.length ? terms : [{ term: "MONTHLY", label: "Monthly", months: 1, discountPct: 0 }]).map((t) => (
+              <button
+                type="button"
+                key={t.term}
+                onClick={() => setTerm(t.term)}
+                className={clsx("rounded-lg border px-2 py-2 text-center transition-colors", term === t.term ? "border-brand-500 bg-brand-500/5" : "border-black/10 dark:border-white/15")}
+              >
+                <p className="text-[12px] font-medium text-ink-primary">{t.label}</p>
+                {t.discountPct > 0 && <p className="text-[10.5px] text-status-good">-{Math.round(t.discountPct * 100)}%</p>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <Label>Seats</Label>
+          <Input type="number" min={1} value={seats} onChange={(e) => setSeats(Math.max(1, Number(e.target.value) || 1))} />
+          {quote && quote.extraSeats > 0 && (
+            <p className="text-[11.5px] text-ink-muted mt-1">
+              {quote.includedSeats} included + {quote.extraSeats} extra (${quote.extraSeatMonthlyUsd}/mo)
+            </p>
+          )}
+        </div>
+
+        {quote && (
+          <div className="rounded-lg border border-black/10 dark:border-white/15 p-3 space-y-1">
+            <div className="flex justify-between text-[12.5px]">
+              <span className="text-ink-secondary">Subtotal ({quote.termMonths} {quote.termMonths === 1 ? "month" : "months"})</span>
+              <span className="text-ink-primary tabular-nums">${(quote.subtotalMonthlyUsd * quote.termMonths).toFixed(2)}</span>
+            </div>
+            {quote.discountPct > 0 && (
+              <div className="flex justify-between text-[12.5px]">
+                <span className="text-status-good">Term discount ({Math.round(quote.discountPct * 100)}%)</span>
+                <span className="text-status-good tabular-nums">-${(quote.subtotalMonthlyUsd * quote.termMonths * quote.discountPct).toFixed(2)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-[14px] font-semibold pt-1 border-t border-black/[0.06] dark:border-white/10">
+              <span className="text-ink-primary">Due today</span>
+              <span className="text-ink-primary tabular-nums">${quote.totalDueUsd.toFixed(2)}</span>
+            </div>
+            <p className="text-[11px] text-ink-muted">Effective ${quote.effectiveMonthlyPriceUsd.toFixed(2)}/mo. AI credits are billed separately, pay-as-you-go.</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Mobile money network</Label>
+            <select value={network} onChange={(e) => setNetwork(e.target.value as "MTN" | "AIRTEL")} className="w-full rounded-lg border border-black/10 dark:border-white/15 bg-surface px-3 py-2 text-[13.5px] text-ink-primary">
+              <option value="MTN">MTN Mobile Money</option>
+              <option value="AIRTEL">Airtel Money</option>
+            </select>
+          </div>
+          <div>
+            <Label>Phone number</Label>
+            <Input required value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="7XXXXXXXX" />
+          </div>
+        </div>
+
+        {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
+        {started && <p className="text-[12.5px] text-status-good">Payment started — check your phone to approve it, then refresh this page once complete.</p>}
+        <Button type="submit" disabled={submitting || !quote}>
+          {submitting ? "Starting…" : `Continue — $${quote?.totalDueUsd.toFixed(2) ?? "…"}`}
+        </Button>
+      </form>
     </div>
   );
 }

@@ -13,7 +13,10 @@ export async function GET() {
   const result = await runHealthCheck(session.tenantId, progress.agentId);
 
   if (result.ready && progress.currentStep === "HEALTH_CHECK") {
-    await advanceOnboardingStep(session.tenantId, "HEALTH_CHECK", "GO_LIVE");
+    // Next stop is TEAM_INVITE (Industry Team Subscription Architecture
+    // doc, Part D) — explicitly skippable, see
+    // api/internal/onboarding/team-invite/continue.
+    await advanceOnboardingStep(session.tenantId, "HEALTH_CHECK", "TEAM_INVITE");
     await logOnboardingEvent(session.tenantId, "health_check_completed", { ready: true });
   }
 

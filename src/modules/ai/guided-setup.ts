@@ -44,8 +44,27 @@ export interface GuidedAgentConfig {
   escalationConditions: string[];
 }
 
-/** docs/ONBOARDING_SPEC.md addendum §A3's mapping table, made concrete. */
-export function mapAnswersToAgentConfig(answers: GuidedSetupAnswers, businessName: string): GuidedAgentConfig {
+/** Subset of modules/onboarding/industry-templates.ts's IndustryTemplate
+ * this mapping actually consumes — kept narrow so this file doesn't import
+ * the full DB-backed module (same "no DB access here" discipline as the
+ * header comment above). */
+export interface IndustryTemplateOverlay {
+  tone: string | null;
+  qualificationQuestions: string[];
+  salesRules: string[];
+  restrictedTopics: string[];
+  escalationConditions: string[];
+}
+
+/** docs/ONBOARDING_SPEC.md addendum §A3's mapping table, made concrete.
+ *
+ * `industryTemplate` is optional and additive (Industry Team Subscription
+ * Architecture doc, Part A) — when passed, its arrays are UNIONED into the
+ * answer-derived ones (deduped, template first) rather than replacing them,
+ * and its `tone` is used only as a fallback when the owner didn't specify
+ * one. Omitting it (the default) reproduces the exact output this function
+ * has always produced — no existing caller changes behavior. */
+export function mapAnswersToAgentConfig(answers: GuidedSetupAnswers, businessName: string, industryTemplate?: IndustryTemplateOverlay): GuidedAgentConfig {
   const qualificationQuestions = [
     "Could I get your name?",
     "What's the best phone number or email to reach you on?",
@@ -79,16 +98,22 @@ export function mapAnswersToAgentConfig(answers: GuidedSetupAnswers, businessNam
     .filter((line): line is string => Boolean(line))
     .join("\n");
 
+  const union = (base: string[], extra?: string[]) => {
+    if (!extra?.length) return base;
+    const seen = new Set(base.map((s) => s.trim().toLowerCase()));
+    return [...base, ...extra.filter((s) => s.trim() && !seen.has(s.trim().toLowerCase()))];
+  };
+
   return {
     name: "Sales Assistant",
     role: "Sales Assistant",
     company: businessName,
     instructions,
-    tone: answers.tone?.trim() || "friendly, professional",
+    tone: answers.tone?.trim() || industryTemplate?.tone?.trim() || "friendly, professional",
     languageRules: answers.languages?.length ? answers.languages : ["English"],
-    qualificationQuestions,
-    salesRules,
-    restrictedTopics,
-    escalationConditions,
+    qualificationQuestions: union(qualificationQuestions, industryTemplate?.qualificationQuestions),
+    salesRules: union(salesRules, industryTemplate?.salesRules),
+    restrictedTopics: union(restrictedTopics, industryTemplate?.restrictedTopics),
+    escalationConditions: union(escalationConditions, industryTemplate?.escalationConditions),
   };
 }

@@ -8,6 +8,7 @@ import { Input, Label, Textarea } from "@/components/ui/input";
 import { Check } from "lucide-react";
 import clsx from "clsx";
 import { TestAgentPanel } from "@/components/test-agent-panel";
+import { INDUSTRY_CATEGORIES, INDUSTRY_LABELS } from "@/modules/onboarding/industries";
 
 // Keep this list's order in sync with schema.ONBOARDING_STEPS — duplicated
 // here (rather than importing the Drizzle schema into a client component)
@@ -20,6 +21,7 @@ const STEP_ORDER = [
   "AGENT_TEST",
   "CHANNEL_CONNECT",
   "HEALTH_CHECK",
+  "TEAM_INVITE",
   "GO_LIVE",
 ] as const;
 type Step = (typeof STEP_ORDER)[number];
@@ -32,6 +34,7 @@ const STEP_LABELS: Record<Step, string> = {
   AGENT_TEST: "Test your agent",
   CHANNEL_CONNECT: "Connect a channel",
   HEALTH_CHECK: "Health check",
+  TEAM_INVITE: "Invite your team",
   GO_LIVE: "Go live",
 };
 
@@ -48,6 +51,7 @@ const STEP_IS_BUILT: Record<Step, boolean> = {
   AGENT_TEST: true,
   CHANNEL_CONNECT: true,
   HEALTH_CHECK: true,
+  TEAM_INVITE: true,
   GO_LIVE: true,
 };
 
@@ -145,7 +149,7 @@ export function OnboardingWizard({ session }: { session: { tenantId: string; nam
           {progress.currentStep === "BUSINESS_PROFILE" && (
             <BusinessProfileStep session={session} tenant={tenant} onDone={load} />
           )}
-          {progress.currentStep === "KNOWLEDGE_IMPORT" && <KnowledgeImportStep onDone={load} />}
+          {progress.currentStep === "KNOWLEDGE_IMPORT" && <KnowledgeImportStep tenant={tenant} onDone={load} />}
           {progress.currentStep === "AGENT_SETUP" && <AgentSetupStep onDone={load} />}
           {progress.currentStep === "AGENT_TEST" && progress.agentId && (
             <AgentTestStep agentId={progress.agentId} onDone={load} />
@@ -154,6 +158,7 @@ export function OnboardingWizard({ session }: { session: { tenantId: string; nam
             <ChannelConnectStep agentId={progress.agentId} tenant={tenant} onDone={load} />
           )}
           {progress.currentStep === "HEALTH_CHECK" && <HealthCheckStep onDone={load} />}
+          {progress.currentStep === "TEAM_INVITE" && <TeamInviteStep onDone={load} />}
           {progress.currentStep === "GO_LIVE" && progress.agentId && <GoLiveStep agentId={progress.agentId} />}
           {!STEP_IS_BUILT[progress.currentStep] && (
             <UnbuiltStepFallback stepLabel={STEP_LABELS[progress.currentStep]} />
@@ -206,7 +211,18 @@ function BusinessProfileStep({ tenant, onDone }: { session: { tenantId: string; 
         </div>
         <div>
           <Label>Industry</Label>
-          <Input value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} placeholder="Solar energy" />
+          <select
+            value={form.industry}
+            onChange={(e) => setForm({ ...form, industry: e.target.value })}
+            className="w-full rounded-lg border border-black/10 dark:border-white/15 bg-surface px-3 py-2 text-[13.5px] text-ink-primary"
+          >
+            <option value="">Select an industry…</option>
+            {INDUSTRY_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {INDUSTRY_LABELS[c]}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <Label>Country</Label>
@@ -256,11 +272,26 @@ interface DraftProduct {
 
 const EMPTY_PRODUCT: DraftProduct = { name: "", description: "", price: "", currency: "" };
 
-function KnowledgeImportStep({ onDone }: { onDone: () => void }) {
+function KnowledgeImportStep({ tenant, onDone }: { tenant: Tenant; onDone: () => void }) {
   const [mode, setMode] = useState<"choose" | "manual">("choose");
   const [products, setProducts] = useState<DraftProduct[]>([{ ...EMPTY_PRODUCT }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<{ label: string; knowledgeBaseSuggestions: string[] } | null>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+
+  // Industry Team Subscription Architecture doc, Part A — a checklist of
+  // suggested KB doc *titles* to go write, matched off the industry
+  // already picked in the previous (BUSINESS_PROFILE) step. Never
+  // auto-generated content — just prompts for what to add.
+  useEffect(() => {
+    if (!tenant.industry) return;
+    api.get<{ templates: { key: string; label: string; knowledgeBaseSuggestions: string[] }[] }>("/api/internal/industry-templates").then((r) => {
+      const match = r.templates.find((t) => t.key === tenant.industry);
+      if (match?.knowledgeBaseSuggestions?.length) setSuggestions(match);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once, keyed by tenant.industry at mount
+  }, [tenant.industry]);
 
   async function skip() {
     setSaving(true);
@@ -307,6 +338,31 @@ function KnowledgeImportStep({ onDone }: { onDone: () => void }) {
             Base.
           </p>
         </div>
+        {suggestions && (
+          <div className="rounded-lg border border-black/10 dark:border-white/15 p-3">
+            <p className="text-[12.5px] font-medium text-ink-primary mb-1.5">Suggested for {suggestions.label}</p>
+            <p className="text-[11.5px] text-ink-muted mb-2">A checklist of documents worth writing — nothing here is created for you.</p>
+            <div className="space-y-1.5">
+              {suggestions.knowledgeBaseSuggestions.map((s) => (
+                <label key={s} className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
+                  <input
+                    type="checkbox"
+                    checked={checked.has(s)}
+                    onChange={() =>
+                      setChecked((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(s)) next.delete(s);
+                        else next.add(s);
+                        return next;
+                      })
+                    }
+                  />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <ComingSoonOption label="Scan My Website" />
           <ComingSoonOption label="Upload Product Catalogue" />
@@ -431,6 +487,12 @@ interface GuidedConfig {
   escalationConditions: string[];
 }
 
+interface IndustryTemplateOption {
+  key: string;
+  label: string;
+  description: string | null;
+}
+
 function AgentSetupStep({ onDone }: { onDone: () => void }) {
   const router = useRouter();
   const [mode, setMode] = useState<"loading" | "choose" | "questions" | "review" | "pick-existing">("loading");
@@ -439,6 +501,8 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
   const [config, setConfig] = useState<GuidedConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<IndustryTemplateOption[]>([]);
+  const [templateKey, setTemplateKey] = useState<string>("");
 
   useEffect(() => {
     api.get<ExistingAgent[]>("/api/internal/agents").then((agents) => {
@@ -448,6 +512,9 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
       // show the choice when there's something to choose between.
       setMode(agents.length ? "choose" : "questions");
     });
+    // Industry Team Subscription Architecture doc, Part A — optional
+    // starting-point templates, never required.
+    api.get<{ templates: IndustryTemplateOption[] }>("/api/internal/industry-templates").then((r) => setTemplates(r.templates));
   }, []);
 
   async function selectExistingAgent(agentId: string) {
@@ -468,7 +535,7 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
     setSaving(true);
     setError(null);
     try {
-      const cfg = await api.put<GuidedConfig>("/api/internal/agents/guided", answers);
+      const cfg = await api.put<GuidedConfig>("/api/internal/agents/guided", { ...answers, industryTemplateKey: templateKey || undefined });
       setConfig(cfg);
       setMode("review");
     } catch (err) {
@@ -483,7 +550,7 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
     setSaving(true);
     setError(null);
     try {
-      await api.post("/api/internal/agents/guided", config);
+      await api.post("/api/internal/agents/guided", { ...config, industryTemplateKey: templateKey || undefined });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create your agent");
@@ -561,6 +628,38 @@ function AgentSetupStep({ onDone }: { onDone: () => void }) {
         <h1 className="text-[16px] font-semibold text-ink-primary">Meet your AI Sales Agent</h1>
         <p className="text-[12.5px] text-ink-secondary mt-0.5">Answer a few questions about your business — no prompts to write.</p>
       </div>
+      {templates.length > 0 && (
+        <div>
+          <Label>Start from an industry template (optional)</Label>
+          <p className="text-[11.5px] text-ink-muted mb-1.5">Pre-fills qualification questions and rules below — everything stays fully editable.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setTemplateKey("")}
+              className={clsx(
+                "text-left rounded-lg border p-2.5 transition-colors",
+                templateKey === "" ? "border-brand-500 bg-brand-500/5" : "border-black/10 dark:border-white/15"
+              )}
+            >
+              <p className="text-[12.5px] font-medium text-ink-primary">Start from scratch</p>
+            </button>
+            {templates.map((t) => (
+              <button
+                type="button"
+                key={t.key}
+                onClick={() => setTemplateKey(t.key)}
+                className={clsx(
+                  "text-left rounded-lg border p-2.5 transition-colors",
+                  templateKey === t.key ? "border-brand-500 bg-brand-500/5" : "border-black/10 dark:border-white/15"
+                )}
+              >
+                <p className="text-[12.5px] font-medium text-ink-primary">{t.label}</p>
+                {t.description && <p className="text-[11px] text-ink-muted mt-0.5">{t.description}</p>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div>
         <Label>What does your business sell?</Label>
         <Textarea required rows={2} value={answers.whatDoYouSell} onChange={(e) => setAnswers({ ...answers, whatDoYouSell: e.target.value })} />
@@ -808,6 +907,90 @@ function HealthCheckStep({ onDone }: { onDone: () => void }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Wraps the EXISTING team-invite mechanism (api/internal/team) — no new
+// invite backend, just this step's own "continue" affordance (Industry
+// Team Subscription Architecture doc, Part D). Explicitly skippable per
+// ONBOARDING_SPEC.md's note that team invites belong "later,
+// contextually," not forced.
+function TeamInviteStep({ onDone }: { onDone: () => void }) {
+  const [form, setForm] = useState({ name: "", email: "", role: "SALES" });
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [continuing, setContinuing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function invite(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setError(null);
+    try {
+      const res = await api.post<{ temporaryPassword: string }>("/api/internal/team", form);
+      setTempPassword(res.temporaryPassword);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send that invite");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function next() {
+    setContinuing(true);
+    try {
+      await api.post("/api/internal/onboarding/team-invite/continue");
+      onDone();
+    } finally {
+      setContinuing(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-[16px] font-semibold text-ink-primary">Invite your team</h1>
+        <p className="text-[12.5px] text-ink-secondary mt-0.5">
+          Add teammates now, or skip and invite them anytime from Team. Everyone shares the same AI credit pool.
+        </p>
+      </div>
+      {tempPassword ? (
+        <div className="space-y-3 rounded-lg border border-black/10 dark:border-white/15 p-3">
+          <p className="text-[12.5px] text-ink-secondary">No email delivery configured in this MVP — share this temporary password with them directly.</p>
+          <pre className="bg-black text-white text-[12px] rounded-lg p-3">{tempPassword}</pre>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setTempPassword(null);
+              setForm({ name: "", email: "", role: "SALES" });
+            }}
+          >
+            Invite another
+          </Button>
+        </div>
+      ) : (
+        <form onSubmit={invite} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+          <div>
+            <Label>Name</Label>
+            <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </div>
+          <div>
+            <Label>Email</Label>
+            <Input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </div>
+          <Button type="submit" disabled={inviting}>
+            {inviting ? "Sending…" : "Send invite"}
+          </Button>
+        </form>
+      )}
+      {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
+      <div className="flex gap-2 pt-1">
+        <Button onClick={next} disabled={continuing}>
+          {continuing ? "Continuing…" : "Continue"}
+        </Button>
+      </div>
     </div>
   );
 }

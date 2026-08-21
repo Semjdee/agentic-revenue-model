@@ -67,3 +67,16 @@ export const CUSTOM_TOPUP_MIN_USD = 15;
 export function creditsForCustomAmount(usd: number): number {
   return Math.round(usd / CREDIT_PRICE_USD);
 }
+
+/** Human seats — Industry Team Subscription Architecture doc, Part B. A
+ * fourth, deliberately independent commercial lever alongside plan/AI
+ * credits/subscription term (the doc's own closing principle: these four
+ * never merge). Included counts are the doc's own stated numbers, not
+ * derived; ADDITIONAL_SEAT_PRICE_USD is likewise the doc's own $5/seat/mo. */
+export const PLAN_INCLUDED_SEATS: Record<CreditPlan, number> = {
+  FREE: 3,
+  PRO: 7,
+  PREMIUM: 15,
+};
+
+export const ADDITIONAL_SEAT_PRICE_USD = 5;

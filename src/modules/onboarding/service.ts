@@ -112,6 +112,7 @@ export const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
   AGENT_TEST: "Test your agent",
   CHANNEL_CONNECT: "Connect a channel",
   HEALTH_CHECK: "Health check",
+  TEAM_INVITE: "Invite your team",
   GO_LIVE: "Go live",
 };
 

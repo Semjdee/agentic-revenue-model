@@ -38,6 +38,15 @@ export async function POST(req: NextRequest) {
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) return jsonError("Invalid email or password", 401);
 
+  // A teammate invited via api/internal/team starts "INVITED" (Industry
+  // Team Subscription Architecture doc, Part B) — flips to "ACTIVE" on
+  // this, their first successful login. Every other account (self-signup,
+  // phone/OTP, Google/Apple) is already "ACTIVE" by default and this is a
+  // no-op for them.
+  if (user.status === "INVITED") {
+    await db.update(schema.users).set({ status: "ACTIVE" }).where(eq(schema.users.id, user.id));
+  }
+
   await setSessionCookie({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, name: user.name });
   await logAudit({ tenantId: user.tenantId, userId: user.id, action: "user.login", entity: "user", entityId: user.id, source: "APP" });
 
