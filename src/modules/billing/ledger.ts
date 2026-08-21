@@ -4,10 +4,15 @@ import { eq } from "drizzle-orm";
 import { computeApiCostUsd, computeCreditsCharged, type UsageInput } from "./pricing";
 
 // Single chokepoint for every credit balance read/write — every AI call
-// site (conversation engine, sandbox) goes through checkCredits() before
-// calling the model and chargeUsage() after, never touching
-// credit_balances/credit_ledger directly. Same "one place, not
-// re-implemented per caller" discipline as src/modules/onboarding/service.ts.
+// site (conversation engine, sandbox) goes through
+// reserve-policy.ts's checkCreditsForTrigger() before calling the model
+// and chargeUsage() (below) after, never touching credit_balances/
+// credit_ledger directly. Same "one place, not re-implemented per caller"
+// discipline as src/modules/onboarding/service.ts. The simple >0 gate
+// this file used to export directly as checkCredits() now lives as the
+// ESSENTIAL-tier case inside checkCreditsForTrigger() — see
+// reserve-policy.ts for the reserve/max-drawdown policy layered on top
+// for the other trigger tiers.
 
 export async function getOrInitBalance(tenantId: string) {
   const [existing] = await db.select().from(schema.creditBalances).where(eq(schema.creditBalances.tenantId, tenantId)).limit(1);
@@ -40,27 +45,14 @@ export async function grantCredits(tenantId: string, amount: number, type: "GRAN
   return balanceAfter;
 }
 
-export interface CreditCheckResult {
-  ok: boolean;
-  balance: number;
-}
-
-/** Pre-call check — never let a conversation reach the AI provider with a
- * balance at or below zero. This is the actual enforcement point; the
- * conversation engine must not call getAIProvider().generateReply() unless
- * this returns ok:true. */
-export async function checkCredits(tenantId: string): Promise<CreditCheckResult> {
-  const { balance } = await getOrInitBalance(tenantId);
-  return { ok: balance > 0, balance };
-}
-
 /** Post-call charge — meters what the AI call actually cost and deducts
  * it. Can only run AFTER the provider returns, since exact token counts
- * aren't known beforehand; this is why checkCredits() is a >0 gate rather
- * than a "do we have enough for this exact call" check — the balance can
- * go slightly negative on the turn that exhausts it, but checkCredits()
- * blocks every turn after that. Standard for token-metered systems where
- * cost is only known post-hoc; documented here rather than left implicit. */
+ * aren't known beforehand; this is why the ESSENTIAL-tier pre-call check
+ * (reserve-policy.ts's checkCreditsForTrigger) is a >0 gate rather than a
+ * "do we have enough for this exact call" check — the balance can go
+ * slightly negative on the turn that exhausts it, but the next turn is
+ * blocked. Standard for token-metered systems where cost is only known
+ * post-hoc; documented here rather than left implicit. */
 export async function chargeUsage(params: { tenantId: string; conversationId?: string | null; usage: UsageInput }) {
   const costUsd = computeApiCostUsd(params.usage);
   const credits = computeCreditsCharged(costUsd);

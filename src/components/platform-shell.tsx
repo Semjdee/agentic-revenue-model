@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut } from "lucide-react";
+import { LayoutDashboard, LogOut, BarChart3 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import clsx from "clsx";
 import type { PlatformSessionPayload } from "@/lib/platform-auth";
 
-const NAV = [{ href: "/platform/dashboard", label: "Dashboard", icon: LayoutDashboard }];
+const NAV = [
+  { href: "/platform/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/platform/analytics", label: "Analytics", icon: BarChart3 },
+];
 
 export function PlatformShell({ session, children }: { session: PlatformSessionPayload; children: React.ReactNode }) {
   const pathname = usePathname();

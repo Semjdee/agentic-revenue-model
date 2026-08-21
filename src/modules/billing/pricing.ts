@@ -85,3 +85,17 @@ export function computeApiCostUsd(usage: UsageInput): number {
 export function computeCreditsCharged(costUsd: number): number {
   return Math.max(1, Math.ceil(costUsd / MAX_COST_USD_PER_CREDIT));
 }
+
+/** Same rounding as computeCreditsCharged(), except a run that cost
+ * exactly $0 reports 0, not the usual minimum-1 floor. Use this for
+ * REPORTING (per-agent cost breakdowns, usage forecasts) where the input
+ * might be MockAIProvider runs that never called chargeUsage() at all —
+ * unlike computeCreditsCharged() (used at actual charge time, where the
+ * input is always a real provider call by construction), a reporting
+ * aggregate can't assume that, and applying the min-1 floor there would
+ * claim a mock run "cost 1 credit" when the tenant's balance was never
+ * actually touched — a real accuracy bug caught in this platform's own
+ * verification testing before shipping. */
+export function approxCreditsFromCost(costUsd: number): number {
+  return costUsd > 0 ? computeCreditsCharged(costUsd) : 0;
+}

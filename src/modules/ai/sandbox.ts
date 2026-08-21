@@ -3,8 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { runAIExecution } from "@/modules/ai";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
 import type { ConversationTurn } from "@/modules/ai/types";
-import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
+import { chargeUsage } from "@/modules/billing/ledger";
 import { chooseModel } from "@/modules/billing/model-router";
+import { checkCreditsForTrigger, explainBlockedReason } from "@/modules/billing/reserve-policy";
 
 // Agent test sandbox — docs/ONBOARDING_SPEC.md section 14 / addendum §A13.
 //
@@ -48,9 +49,18 @@ export async function runSandboxMessage(params: {
   if (!agent) throw new Error("Agent not found");
 
   // Sandbox calls hit the same real provider as production (see file
-  // header) — they cost real money too, so they're metered the same way.
-  const credits = await checkCredits(params.tenantId);
-  if (!credits.ok) throw new Error("OUT_OF_CREDITS");
+  // header) — they cost real money too, so they're metered the same way,
+  // but as DISCRETIONARY usage under the reserve/max-drawdown policy
+  // (modules/billing/reserve-policy.ts) — testing is the first thing
+  // that pauses when a tenant's balance runs low, protecting the reserve
+  // that keeps live customer conversations working.
+  const credits = await checkCreditsForTrigger(params.tenantId, "SANDBOX_TEST");
+  if (!credits.ok) {
+    const isExhausted = credits.reason === "balance_exhausted";
+    const err = new Error(isExhausted ? "You're out of AI credits — buy more to keep testing and going live." : explainBlockedReason(credits));
+    err.name = isExhausted ? "OUT_OF_CREDITS" : "CREDITS_RESERVED";
+    throw err;
+  }
 
   const products = await db
     .select()

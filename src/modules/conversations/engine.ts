@@ -2,7 +2,8 @@ import { db, schema } from "@/db/client";
 import { generateId } from "@/lib/ids";
 import { and, eq, desc } from "drizzle-orm";
 import { runAIExecution } from "@/modules/ai";
-import { checkCredits, chargeUsage } from "@/modules/billing/ledger";
+import { chargeUsage } from "@/modules/billing/ledger";
+import { checkCreditsForTrigger } from "@/modules/billing/reserve-policy";
 import { chooseModel } from "@/modules/billing/model-router";
 import { executeToolCalls } from "@/modules/ai/actions";
 import { retrieveRelevantKnowledge } from "@/modules/knowledge/service";
@@ -392,8 +393,12 @@ export async function handleCustomerMessage(params: {
   // Credit gate (src/modules/billing/) — never call a real AI provider
   // without checking the tenant can afford it first. Hands off to a human
   // gracefully rather than leaving the customer unanswered or silently
-  // running the tenant's balance further negative.
-  const credits = await checkCredits(tenantId);
+  // running the tenant's balance further negative. INBOUND_MESSAGE is the
+  // ESSENTIAL tier in the reserve/max-drawdown policy (reserve-policy.ts)
+  // — this check is refused only when the tenant is genuinely at or below
+  // zero, never by the reserve or a daily cap, which apply to
+  // discretionary usage only. A live customer is never crowded out.
+  const credits = await checkCreditsForTrigger(tenantId, "INBOUND_MESSAGE");
   if (!credits.ok) {
     await db.update(schema.conversations).set({ aiActive: false, updatedAt: new Date(), lastMessageAt: new Date() }).where(eq(schema.conversations.id, conversationId));
     await db.insert(schema.messages).values({

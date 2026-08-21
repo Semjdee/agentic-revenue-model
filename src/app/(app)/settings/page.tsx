@@ -284,6 +284,82 @@ interface CreditsResponse {
   pricing: { freeTierGrant: number; paidTopupCredits: number; paidTopupPriceUsd: number };
 }
 
+interface AgentCostRow {
+  agentId: string | null;
+  agentName: string;
+  runs: number;
+  totalCostUsd: number;
+  approxCredits: number;
+}
+interface UsageForecast {
+  currentBalance: number;
+  monthlyAllotment: number;
+  reserveThreshold: number;
+  avgDailyCredits7d: number;
+  avgDailyCredits30d: number;
+  projectedMonthlyCredits: number | null;
+  daysOfRunway: number | null;
+  byAgent: AgentCostRow[];
+  reserveStatus: { tier: string; ok: boolean; reason?: string };
+}
+
+// Usage forecast & reserve — modules/billing/forecast.ts +
+// reserve-policy.ts. Every number here is real trailing usage, never a
+// plan-based guess; "insufficient data yet" is shown honestly rather
+// than a number extrapolated from one or two days of activity.
+function UsageForecastCard() {
+  const [forecast, setForecast] = useState<UsageForecast | null>(null);
+
+  useEffect(() => {
+    api.get<UsageForecast>("/api/internal/billing/forecast").then(setForecast);
+  }, []);
+
+  if (!forecast) return null;
+
+  const inReserve = forecast.currentBalance <= forecast.reserveThreshold;
+
+  return (
+    <div className="card p-4 space-y-3">
+      <p className="text-[12.5px] font-semibold text-ink-primary">Usage forecast &amp; reserve</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Avg / day (7d)" value={forecast.avgDailyCredits7d.toLocaleString()} />
+        <Stat label="Projected this month" value={forecast.projectedMonthlyCredits === null ? "Not enough data yet" : forecast.projectedMonthlyCredits.toLocaleString()} />
+        <Stat label="Days of runway" value={forecast.daysOfRunway === null ? "—" : `${forecast.daysOfRunway}d`} />
+        <Stat label="Reserved for live chats" value={forecast.reserveThreshold.toLocaleString()} />
+      </div>
+      <p className="text-[11.5px] text-ink-muted">
+        {inReserve
+          ? "Your balance has dropped into the reserve that protects live customer conversations — those keep working regardless; agent-testing pauses until you top up."
+          : "Live customer conversations are always kept working first. A reserve is held back so a busy testing session in the agent builder can never take those down — see the Special AI Notes in the build docs for the full policy."}
+      </p>
+      {forecast.byAgent.length > 0 && (
+        <div>
+          <p className="text-[11px] text-ink-muted uppercase tracking-wide mb-1.5">Cost by agent (last 30 days)</p>
+          <div className="space-y-1">
+            {forecast.byAgent.map((a) => (
+              <div key={a.agentId ?? "unassigned"} className="flex items-center justify-between text-[12px]">
+                <span className="text-ink-secondary truncate">{a.agentName}</span>
+                <span className="text-ink-muted tabular-nums shrink-0 ml-2">
+                  {a.runs} run{a.runs === 1 ? "" : "s"} · ~{a.approxCredits.toLocaleString()} credits
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10.5px] text-ink-muted uppercase tracking-wide">{label}</p>
+      <p className="text-[15px] font-semibold text-ink-primary tabular-nums mt-0.5">{value}</p>
+    </div>
+  );
+}
+
 // AI usage credits — src/modules/billing/. Every row here is a real
 // metered charge (or a real grant), never a placeholder number.
 function CreditsTab() {
@@ -335,6 +411,7 @@ function CreditsTab() {
           Running low — once this reaches 0, your AI agent stops replying automatically and hands new conversations to a human until you top up.
         </div>
       )}
+      <UsageForecastCard />
       <div>
         <p className="text-[12.5px] text-ink-secondary mb-2">Recent activity</p>
         <div className="card overflow-hidden">

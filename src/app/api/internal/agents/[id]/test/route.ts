@@ -35,9 +35,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return jsonOk(result);
   } catch (err) {
     if (err instanceof Error && err.message === "Agent not found") return jsonError("Agent not found", 404);
-    if (err instanceof Error && err.message === "OUT_OF_CREDITS") {
-      return jsonError("You're out of AI credits — buy more to keep testing and going live.", 402, "OUT_OF_CREDITS");
-    }
+    // Two distinct blocked states from the reserve/max-drawdown policy
+    // (modules/billing/reserve-policy.ts): genuinely out of credits vs.
+    // testing specifically paused to protect the reserve/daily cap while
+    // real credits remain — different messages, same 402 status.
+    if (err instanceof Error && err.name === "OUT_OF_CREDITS") return jsonError(err.message, 402, "OUT_OF_CREDITS");
+    if (err instanceof Error && err.name === "CREDITS_RESERVED") return jsonError(err.message, 402, "CREDITS_RESERVED");
     throw err;
   }
 }

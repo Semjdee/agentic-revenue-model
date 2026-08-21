@@ -423,6 +423,7 @@ export const AGENT_RUN_STATUSES = [
 // channel (website/WhatsApp/Instagram/Messenger all funnel through
 // handleCustomerMessage — see src/modules/conversations/engine.ts).
 export const AGENT_RUN_TRIGGERS = ["INBOUND_MESSAGE", "SANDBOX_TEST", "FOLLOWUP"] as const;
+export type AgentRunTrigger = (typeof AGENT_RUN_TRIGGERS)[number];
 
 export const agentRuns = pgTable(
   "agent_runs",
@@ -1206,6 +1207,17 @@ export const creditBalances = pgTable("credit_balances", {
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }).unique(),
   balance: integer("balance").notNull().default(0),
   plan: text("plan").$type<(typeof CREDIT_PLANS)[number]>().notNull().default("FREE"),
+  // Reference monthly credit budget this tenant is expected to run on —
+  // the denominator the reserve/max-drawdown policy (modules/billing/
+  // reserve-policy.ts) computes its thresholds against. Nullable: falls
+  // back to a plan-based default (FREE_TIER_GRANT_CREDITS / a paid
+  // reference amount, see reserve-policy.ts's resolveMonthlyAllotment())
+  // until a platform admin sets an explicit value for a tenant with an
+  // unusual usage pattern (e.g. an enterprise deal). Not a hard monthly
+  // reset — this platform's balance is still a running total, see
+  // billing/ledger.ts's header comment — purely the reference figure the
+  // policy percentages below are computed against.
+  monthlyAllotment: integer("monthly_allotment"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
