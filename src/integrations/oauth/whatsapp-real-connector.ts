@@ -98,7 +98,7 @@ export class RealWhatsAppConnector implements OAuthConnector {
     // see the comment on exchangeAuthorizationCode(). A caller reaching
     // this means something upstream assumed a refresh flow that doesn't
     // apply here; fail loudly rather than fabricate a token.
-    throw new Error("WhatsApp System User tokens do not support refresh — reconnect with a new token instead.");
+    throw new Error(`WhatsApp System User tokens do not support refresh (got token ending in "...${refreshToken.slice(-4)}") — reconnect with a new token instead.`);
   }
 
   async revokeAccess(): Promise<{ ok: boolean }> {
