@@ -31,6 +31,17 @@
 body {
   color: var(--foreground);
   background: var(--background);
+  /* UI/UX Modernization doc §1 "Change the typography" — Geist is loaded
+     via next/font/local (layout.tsx) and available as this CSS variable,
+     and tailwind.config.ts's fontFamily.sans extension points at it too,
+     but neither of those alone puts a font-family DECLARATION on the
+     page: Tailwind's Preflight reset doesn't apply theme('fontFamily.sans')
+     to html/body by default, and nothing else was applying the `font-sans`
+     utility either — so every browser was silently falling back to its
+     default serif (Times New Roman), which is exactly the "serif-heavy"
+     complaint the doc opens with. Confirmed live via
+     getComputedStyle(document.body).fontFamily before this fix. */
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 @layer utilities {
