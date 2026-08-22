@@ -14,6 +14,7 @@ import { logOnboardingEventOnce } from "@/modules/onboarding/service";
 import { ensureLegacyWidgetForAgent, firstEnabledWidgetAgent } from "@/modules/widgets/service";
 import { routeConversation } from "@/modules/widgets/router";
 import { isReferralOnlyMessage } from "@/modules/influencers/attribution";
+import { dispatchOutboundChannelMessage } from "./channel-dispatch";
 
 export interface StartConversationInput {
   /** Legacy embed: <script data-agent="..."> — still fully supported,
@@ -400,14 +401,16 @@ export async function handleCustomerMessage(params: {
   // discretionary usage only. A live customer is never crowded out.
   const credits = await checkCreditsForTrigger(tenantId, "INBOUND_MESSAGE");
   if (!credits.ok) {
+    const handoffMessage = "Thanks for your patience — let me get one of our team to help you with this.";
     await db.update(schema.conversations).set({ aiActive: false, updatedAt: new Date(), lastMessageAt: new Date() }).where(eq(schema.conversations.id, conversationId));
     await db.insert(schema.messages).values({
       id: generateId(),
       tenantId,
       conversationId,
       sender: "AI",
-      content: "Thanks for your patience — let me get one of our team to help you with this.",
+      content: handoffMessage,
     });
+    await dispatchOutboundChannelMessage({ tenantId, conversationId, channel: conversation.channel, content: handoffMessage });
     await db.insert(schema.tasks).values({
       id: generateId(),
       tenantId,
@@ -522,6 +525,11 @@ export async function handleCustomerMessage(params: {
     sender: "AI",
     content: reply.message,
   });
+
+  // Push the reply out to the customer's real phone (WhatsApp) — no-op for
+  // a widget conversation or a mock/unconnected channel. See
+  // channel-dispatch.ts.
+  await dispatchOutboundChannelMessage({ tenantId, conversationId, channel: conversation.channel, content: reply.message });
 
   const newProductsDiscussed = new Set(conversation.productsDiscussed ?? []);
   for (const call of reply.toolCalls) {

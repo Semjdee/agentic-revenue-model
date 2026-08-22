@@ -28,6 +28,8 @@ export function OAuthMockConsentForm({
   fields,
   state,
   returnTo = "/onboarding",
+  helperText,
+  submitLabel = "Authorize & Connect",
 }: {
   providerLabel: string;
   brandColor: string;
@@ -36,6 +38,11 @@ export function OAuthMockConsentForm({
   fields: MockConsentField[];
   state: string;
   returnTo?: string;
+  /** Overrides the default "Demo authorization — no real account needed"
+   * copy — used by a real (non-mock) connector's credential-entry screen,
+   * where that line would be actively wrong. */
+  helperText?: string;
+  submitLabel?: string;
 }) {
   const router = useRouter();
   const [values, setValues] = useState<Record<string, string>>(Object.fromEntries(fields.map((f) => [f.key, ""])));
@@ -68,7 +75,7 @@ export function OAuthMockConsentForm({
             <p className="text-[13px] font-semibold text-ink-primary">
               Connect {/^[aeiou]/i.test(providerLabel) ? "an" : "a"} {providerLabel} account
             </p>
-            <p className="text-[11px] text-ink-muted">Demo authorization — no real {providerLabel} account needed</p>
+            <p className="text-[11px] text-ink-muted">{helperText ?? `Demo authorization — no real ${providerLabel} account needed`}</p>
           </div>
         </div>
         <form onSubmit={authorize} className="space-y-3">
@@ -80,7 +87,7 @@ export function OAuthMockConsentForm({
           ))}
           {error && <p className="text-[12.5px] text-status-critical">{error}</p>}
           <Button type="submit" disabled={loading || !state} className="w-full">
-            {loading ? "Authorizing…" : "Authorize & Connect"}
+            {loading ? "Connecting…" : submitLabel}
           </Button>
           {!state && <p className="text-[11px] text-status-critical">Missing authorization state — go back and click Connect again.</p>}
         </form>

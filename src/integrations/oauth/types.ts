@@ -29,7 +29,11 @@ export interface OAuthConnector {
    * anything this method receives. */
   handleCallback(params: { code: string; state: string; expectedState: string }): Promise<{ ok: boolean; reason?: string }>;
 
-  exchangeAuthorizationCode(params: { code: string }): Promise<OAuthTokens & { externalAccountId: string; externalAccountName: string }>;
+  /** `extra` carries whatever provider-specific fields (e.g. WhatsApp's
+   * WABA id, which is neither the access token nor the externalAccountId)
+   * a connector's own exchangeAuthorizationCode() decided to return
+   * alongside the required OAuthTokens shape — mock connectors ignore it. */
+  exchangeAuthorizationCode(params: { code: string }): Promise<OAuthTokens & { externalAccountId: string; externalAccountName: string; extra?: Record<string, unknown> }>;
 
   refreshToken(refreshToken: string): Promise<OAuthTokens>;
 
@@ -38,11 +42,11 @@ export interface OAuthConnector {
   /** Real check against the provider — must fail honestly if the
    * connection isn't actually usable, never a hardcoded success (spec
    * section 35). */
-  testConnection(accessToken: string): Promise<{ ok: boolean; detail?: string }>;
+  testConnection(accessToken: string, extra?: Record<string, unknown>): Promise<{ ok: boolean; detail?: string }>;
 
   getGrantedScopes(accessToken: string): Promise<string[]>;
 
-  registerWebhooks(params: { accessToken: string; callbackUrl: string }): Promise<{ ok: boolean; detail?: string }>;
+  registerWebhooks(params: { accessToken: string; callbackUrl: string; extra?: Record<string, unknown> }): Promise<{ ok: boolean; detail?: string }>;
 
-  unregisterWebhooks(accessToken: string): Promise<{ ok: boolean }>;
+  unregisterWebhooks(accessToken: string, extra?: Record<string, unknown>): Promise<{ ok: boolean }>;
 }

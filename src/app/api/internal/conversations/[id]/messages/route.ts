@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { jsonError, jsonOk } from "@/lib/api";
 import { dispatchWebhooks } from "@/modules/webhooks/dispatch";
+import { dispatchOutboundChannelMessage } from "@/modules/conversations/channel-dispatch";
 
 const bodySchema = z.object({ content: z.string().min(1) });
 
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     content: parsed.data.content,
   });
   await db.update(schema.conversations).set({ updatedAt: new Date(), lastMessageAt: new Date(), aiActive: false }).where(eq(schema.conversations.id, params.id));
+  await dispatchOutboundChannelMessage({ tenantId: session.tenantId, conversationId: params.id, channel: conv.channel, content: parsed.data.content });
   await dispatchWebhooks(session.tenantId, "message.sent", { conversationId: params.id });
 
   return jsonOk({ id }, 201);

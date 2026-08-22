@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 import { db, schema } from "@/db/client";
 import { and, eq } from "drizzle-orm";
 import { jsonError, jsonOk } from "@/lib/api";
@@ -19,8 +20,34 @@ import { resolveTrackingLink } from "@/modules/influencers/tracking-links";
 // CONNECTED integration's externalAccountId, never from anything else in
 // the payload. A payload for a phone_number_id with no CONNECTED
 // integration is rejected, not silently accepted.
+
+/** Meta signs every webhook POST body with the app secret
+ * (X-Hub-Signature-256: sha256=<hex hmac>). Verified only when
+ * META_APP_SECRET is set — same "real check, mock skips it" split every
+ * other webhook verifier in this codebase follows (see
+ * integrations/payments/flutterwave.ts's MockFlutterwaveConnector vs real
+ * one). Without this, anyone who learns a tenant's phone_number_id could
+ * POST fake customer messages here. */
+function verifySignature(rawBody: string, signatureHeader: string | null): boolean {
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret) return true; // mock mode — no real secret to check against
+  if (!signatureHeader?.startsWith("sha256=")) return false;
+  const expected = crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const provided = signatureHeader.slice("sha256=".length);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
+  } catch {
+    return false; // length mismatch etc. — never let a malformed header throw past this
+  }
+}
+
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
+  const rawBody = await req.text();
+  if (!verifySignature(rawBody, req.headers.get("x-hub-signature-256"))) {
+    return jsonError("Invalid webhook signature", 401);
+  }
+
+  const body = JSON.parse(rawBody || "{}");
   const value = body?.entry?.[0]?.changes?.[0]?.value;
   const phoneNumberId: string | undefined = value?.metadata?.phone_number_id;
   const message = value?.messages?.[0];
@@ -64,11 +91,17 @@ export async function POST(req: NextRequest) {
   return jsonOk({ conversationId: result.conversationId });
 }
 
-/** Meta's webhook verification handshake (hub.challenge echo) — real
- * connector only; harmless to answer honestly even in mock mode since no
- * secret is involved. */
+/** Meta's webhook verification handshake (hub.challenge echo). Real
+ * connector: must also check hub.verify_token matches the secret we
+ * registered in the Meta App dashboard, or anyone could point their own
+ * app's webhook at this URL and have it "verify." Checked only when
+ * WHATSAPP_WEBHOOK_VERIFY_TOKEN is set — harmless to skip in mock mode
+ * since no real Meta App is pointed at this URL yet. */
 export async function GET(req: NextRequest) {
   const challenge = req.nextUrl.searchParams.get("hub.challenge");
-  if (challenge) return new Response(challenge, { status: 200 });
-  return jsonError("Missing hub.challenge", 400);
+  const verifyToken = req.nextUrl.searchParams.get("hub.verify_token");
+  const expectedToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  if (!challenge) return jsonError("Missing hub.challenge", 400);
+  if (expectedToken && verifyToken !== expectedToken) return jsonError("Invalid verify token", 403);
+  return new Response(challenge, { status: 200 });
 }

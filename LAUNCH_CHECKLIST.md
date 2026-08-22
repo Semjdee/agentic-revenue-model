@@ -7,11 +7,25 @@ Started 2026-08-22, after a full audit of the codebase against production behavi
 ## 🔴 Core product — must work before any real customer gets value
 
 - [x] **AI agent replies (Anthropic)** — real, confirmed live 2026-08-22: production sandbox test returned a genuine contextual LLM reply (not templated), and a completed production run shows real, non-round token counts (722 in / 97 out, $0.0012). `ANTHROPIC_API_KEY` is set and valid. Owns: `src/modules/ai/index.ts`.
-- [ ] **WhatsApp — real send + receive** — inbound webhook shape is already Meta-compatible (`src/app/api/public/webhooks/whatsapp/route.ts`), but there is no real outbound send, no webhook signature verification, and the connect flow (`src/integrations/oauth/whatsapp-mock-connector.ts`) is fully mocked. **In progress now.**
+- [~] **WhatsApp — real send + receive** — code built 2026-08-22, verifiable pieces confirmed working, real Meta credentials still needed to finish. See "WhatsApp — status" below.
 - [ ] **Payments (Flutterwave)** — `FLUTTERWAVE_SECRET_KEY`/`FLUTTERWAVE_WEBHOOK_SECRET_HASH` gate real vs mock (`src/integrations/payments/flutterwave.ts:197`). Set the keys, then run one real sandbox transaction end-to-end before trusting it with real money — the connector's own comments flag it as never live-tested.
 - [ ] **Instagram — real send + receive** — same gap as WhatsApp, currently `MockInstagramConnector` (`src/integrations/oauth/instagram-mock-connector.ts`), no real code path exists at all.
 - [ ] **Ad platforms (Meta/Google Ads)** — `MockAdsConnector` unconditionally used (`src/integrations/advertising/mock-connector.ts:117`). No real connector exists yet. Needed for the Advertising/attribution pages to reflect real spend.
 - [ ] **CRM integrations** — `MockCRMConnector` unconditionally used (`src/integrations/crm/mock-connector.ts:83`). No real HubSpot/Kommo/Salesforce/Zoho/Odoo connector exists yet.
+
+### WhatsApp — status (updated 2026-08-22)
+
+Built: real outbound send (`src/integrations/oauth/whatsapp-sender.ts`, calls Meta Graph API's `/messages` endpoint), real webhook signature verification (HMAC-SHA256 against `META_APP_SECRET`) and real `hub.verify_token` handshake on the public webhook route, a real connector (`src/integrations/oauth/whatsapp-real-connector.ts`) wired into `registry.ts` (activates automatically once `META_APP_SECRET` is set), and a real credential-entry page (`/onboarding/whatsapp-connect`) since full Meta Embedded Signup needs a Business Login Config ID this environment can't provision. Every AI reply and human agent reply now gets pushed to the real send function (`modules/conversations/channel-dispatch.ts`), not just stored locally.
+
+Verified without needing a real Meta account: signature verification correctly accepts a validly-signed request and rejects an unsigned/wrong-secret/tampered one (4 checks); the verify-token handshake correctly accepts/rejects; the registry gate correctly switches to the real connector once `META_APP_SECRET` is set; the full existing mock-mode flow (connect → inbound message → AI reply) still works unchanged, 0 regressions. `tsc`/`eslint` clean.
+
+**What's still needed before this is truly live** — none of this can be tested further without it:
+1. Create a free Meta Developer App at developers.facebook.com, add the WhatsApp product (Meta gives every new app a free test phone number, no business verification needed to start).
+2. Give me: `META_APP_ID`, `META_APP_SECRET` (from the App's Basic Settings), and pick your own `WHATSAPP_WEBHOOK_VERIFY_TOKEN` (any secret string you make up).
+3. In the Meta App's WhatsApp → Configuration, set the webhook callback URL to `https://<your-domain>/api/public/webhooks/whatsapp` and the verify token to the same string from step 2.
+4. Once those env vars are set, each tenant connects their own WhatsApp Business Account by going to Integrations → WhatsApp and pasting in a permanent access token + phone number ID + WABA ID from their own Meta Business Manager (Business Settings → System Users).
+5. Send a real test message end to end and confirm it arrives — this is the one thing I genuinely cannot verify myself without step 1-2 happening first.
+6. Before opening this to arbitrary external businesses (not just your own test numbers), Meta requires App Review approval for the `whatsapp_business_management`/`whatsapp_business_messaging` permissions — a business-facing process, not a code change.
 
 ## 🟠 Trust & safety — must have before accepting real signups
 

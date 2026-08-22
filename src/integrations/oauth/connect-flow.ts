@@ -102,8 +102,8 @@ export async function completeOAuthCallback(session: Session, provider: string, 
   const scopes = await connector.getGrantedScopes(tokens.accessToken);
 
   const callbackUrl = `${process.env.APP_URL ?? ""}/api/public/webhooks/${provider}`;
-  const webhookResult = await connector.registerWebhooks({ accessToken: tokens.accessToken, callbackUrl });
-  const testResult = await connector.testConnection(tokens.accessToken);
+  const webhookResult = await connector.registerWebhooks({ accessToken: tokens.accessToken, callbackUrl, extra: tokens.extra });
+  const testResult = await connector.testConnection(tokens.accessToken, tokens.extra);
 
   if (!webhookResult.ok || !testResult.ok) {
     await db.update(schema.integrations).set({ status: "ERROR", webhookStatus: webhookResult.ok ? "HEALTHY" : "FAILED" }).where(eq(schema.integrations.id, row.id));
